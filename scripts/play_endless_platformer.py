@@ -2,7 +2,8 @@
 
 The player can:
     - Hold Right Arrow or 'd' to add a forward boost.
-    - Tap/hold Space or Up Arrow to jump.
+    - Tap/hold Up Arrow to jump.
+    - Press Space to eat.
     - Press Escape or close the window to exit.
 
 The viewer uses Tkinter (standard library) to display the grayscale frames at
@@ -46,7 +47,8 @@ class PlayerApp:
         self.root.title("Endless Platformer Viewer")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-        self.frame_height, self.frame_width = self.observation.shape[:2]
+        image = self.observation["image"]
+        self.frame_height, self.frame_width = image.shape[:2]
         self.scale = PIXEL_SCALE
         self.canvas = tk.Canvas(
             self.root,
@@ -87,10 +89,12 @@ class PlayerApp:
         self._keys_down.pop(event.keysym, None)
 
     def _resolve_action(self) -> int:
-        if any(key in self._keys_down for key in ("space", "Up")):
+        if any(key in self._keys_down for key in ("Up",)):
             return self.env.JUMP
-        if any(key in self._keys_down for key in ("Right", "d")):
+        if any(key in self._keys_down for key in ("Right",)):
             return self.env.FORWARD
+        if any(key in self._keys_down for key in ("space",)):
+            return self.env.EAT
         return self.env.NOOP
 
     def _update(self) -> None:
@@ -102,7 +106,7 @@ class PlayerApp:
         if terminated or truncated:
             self.observation, _ = self.env.reset()
 
-        self._draw_frame(self.observation[..., 0])
+        self._draw_frame(self.observation["image"][..., 0])
         self._schedule_next_frame()
 
     def _draw_frame(self, frame: np.ndarray) -> None:
