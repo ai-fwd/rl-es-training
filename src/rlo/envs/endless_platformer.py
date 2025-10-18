@@ -16,6 +16,7 @@ character on the last safe ground tile after a fall, enabling continuous rollout
 
 from __future__ import annotations
 
+import importlib.resources as pkg_resources
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -38,7 +39,7 @@ class EndlessPlatformerEnv(Env):
         *,
         render_mode: str | None = None,
         gap_width: float = 2.2,
-        gap_probability: float = 0.7,
+        gap_probability: float = 0,
         segment_length: float = 8.0,
         # Energy mechanics (tunable)
         natural_drain_per_sec: float = 0.01,
@@ -70,7 +71,7 @@ class EndlessPlatformerEnv(Env):
         self.forward_boost = 2.5
 
         # Character dimensions and placement.
-        self.character_width = 0.2
+        self.character_width = 1.4
         self.character_height = 1.4
         self.ground_height = 0.0
         self.platform_thickness = 0.5
@@ -135,6 +136,9 @@ class EndlessPlatformerEnv(Env):
         self._energy = 1.0
 
         self._last_frame: np.ndarray | None = None
+        # Lazy-loaded sprite cache (rgb uint8) and transparency key
+        self._sprite_rgb: np.ndarray | None = None
+        self._sprite_bg_rgb: Tuple[int, int, int] | None = None
 
     # --------------------------------------------------------------------- #
     # Gymnasium API
@@ -191,10 +195,18 @@ class EndlessPlatformerEnv(Env):
         assert self.action_space.contains(action), f"{action} is not a valid action."
 
         forward_speed = self.base_speed
+        forward_boost = self.forward_boost
+        jump_velocity = self.jump_velocity
+
+        # if energy is at max then you move slower until back under 1.0
+        if self._energy >= 1.0:
+            forward_speed *= 0.5
+            forward_boost *= 0.5
+            jump_velocity *= 0.5
 
         # Apply forward boost when jumping
         if action == self.JUMP:
-            forward_speed += self.forward_boost
+            forward_speed += forward_boost
 
         # Horizontal movement only when forward action is taken
         previous_x = self._character_x
@@ -203,7 +215,7 @@ class EndlessPlatformerEnv(Env):
 
         # Jump initiation.
         if action == self.JUMP and self._on_ground:
-            self._character_vy = self.jump_velocity
+            self._character_vy = jump_velocity
             self._on_ground = False
             # One-shot jump drain
             self._energy -= self.jump_drain
@@ -277,10 +289,8 @@ class EndlessPlatformerEnv(Env):
         """Return an RGB frame when render_mode is 'rgb_array'."""
         if self.render_mode != "rgb_array":
             raise ValueError("Only the 'rgb_array' render mode is supported.")
-        if self._last_frame is None:
-            _ = self._render_observation()
-        gray = self._last_frame
-        return np.repeat(gray, 3, axis=2)
+        # Produce a color frame for visualization without affecting observation logic
+        return self._render_rgb_frame()
 
     def close(self) -> None:
         """Clean up any renderer state."""
@@ -438,6 +448,335 @@ class EndlessPlatformerEnv(Env):
 
         self._last_frame = frame[:, :, np.newaxis]
         return self._last_frame
+
+    # --------------------------------------------------------------------- #
+    # Color rendering (for visualization only)
+    # --------------------------------------------------------------------- #
+    def _render_rgb_frame(self) -> np.ndarray:
+        """Return a colorized RGB frame with a penguin sprite.
+
+        This does not affect the observation returned to agents.
+        """
+        # Colors (R, G, B)
+        SKY = (135, 206, 235)
+        GROUND_BG = (36, 96, 36)
+        GROUND = (60, 179, 113)
+        ENERGY = (255, 215, 0)
+        HUD = (255, 255, 255)
+
+        h, w = self.frame_height, self.frame_width
+        rgb = np.zeros((h, w, 3), dtype=np.uint8)
+
+        camera_left = self._character_x - self.view_backward
+        camera_width = self.view_backward + self.view_forward
+        camera_bottom = self.ground_height - (self.view_height * 0.25)
+        camera_top = camera_bottom + self.view_height
+
+        px_per_x = self.frame_width / camera_width
+        px_per_y = self.frame_height / (camera_top - camera_bottom)
+
+        def world_to_px_x(x_value: float) -> float:
+            return (x_value - camera_left) * px_per_x
+
+        def world_to_px_y(y_value: float) -> float:
+            return (camera_top - y_value) * px_per_y
+
+        # Sky and ground background split similar to grayscale sky_level
+        sky_level = int(self.frame_height * 0.6)
+        rgb[:sky_level, :, :] = np.array(SKY, dtype=np.uint8)
+        rgb[sky_level:, :, :] = np.array(GROUND_BG, dtype=np.uint8)
+
+        # Platform band (only where no gap)
+        platform_top = int(
+            np.clip(
+                world_to_px_y(self.ground_height + self.platform_thickness), 0, h - 1
+            )
+        )
+        platform_bottom = int(np.clip(world_to_px_y(self.ground_height), 0, h - 1))
+        if platform_top > platform_bottom:
+            platform_top, platform_bottom = platform_bottom, platform_top
+        if platform_bottom >= 0 and platform_top < h:
+            ground_color = np.array(GROUND, dtype=np.uint8)
+            for col in range(w):
+                world_x = camera_left + (col + 0.5) / px_per_x
+                if self._is_gap_at(world_x):
+                    continue
+                rgb[platform_top : platform_bottom + 1, col, :] = ground_color
+
+        # Energy orbs
+        for ox, oy, r in self._energy_orbs:
+            px = int(np.clip((ox - camera_left) * px_per_x, 0, self.frame_width - 1))
+            py = int(np.clip((camera_top - oy) * px_per_y, 0, self.frame_height - 1))
+            pr = int(max(1, r * px_per_x))
+            self._draw_circle_rgb(rgb, px, py, pr, ENERGY)
+
+        # Character sprite overlay
+        char_left = int(
+            np.clip(
+                world_to_px_x(self._character_x - (self.character_width / 2.0)),
+                0,
+                w - 1,
+            )
+        )
+        char_right = int(
+            np.clip(
+                world_to_px_x(self._character_x + (self.character_width / 2.0)),
+                0,
+                w - 1,
+            )
+        )
+        char_bottom = int(np.clip(world_to_px_y(self._character_y), 0, h - 1))
+        char_top = int(
+            np.clip(world_to_px_y(self._character_y + self.character_height), 0, h - 1)
+        )
+        if char_top > char_bottom:
+            char_top, char_bottom = char_bottom, char_top
+
+        # Ensure at least 1px tall/wide
+        cw = max(1, char_right - char_left + 1)
+        ch = max(1, char_bottom - char_top + 1)
+
+        sprite_rgb, bg_rgb = self._get_sprite()
+        if sprite_rgb is None:
+            # Fallback: solid white rectangle (rare: Tk not available)
+            rgb[char_top : char_top + ch, char_left : char_left + cw, :] = 255
+        else:
+            # Preserve aspect ratio: fit inside character box and center.
+            sh, sw, _ = sprite_rgb.shape
+            if sh <= 0 or sw <= 0:
+                rgb[char_top : char_top + ch, char_left : char_left + cw, :] = 255
+            else:
+                scale = max(1e-6, min(cw / sw, ch / sh))
+                tw = max(1, int(round(sw * scale)))
+                th = max(1, int(round(sh * scale)))
+                resized, mask = self._resize_sprite_with_mask(
+                    sprite_rgb, bg_rgb, th, tw
+                )
+                # Center in the character rect and clip to bounds
+                x0 = char_left + (cw - tw) // 2
+                y0 = char_top + (ch - th) // 2
+                x1 = x0 + tw
+                y1 = y0 + th
+                cx0 = max(char_left, x0)
+                cy0 = max(char_top, y0)
+                cx1 = min(char_left + cw, x1)
+                cy1 = min(char_top + ch, y1)
+                if cx1 > cx0 and cy1 > cy0:
+                    sx0 = cx0 - x0
+                    sy0 = cy0 - y0
+                    sx1 = sx0 + (cx1 - cx0)
+                    sy1 = sy0 + (cy1 - cy0)
+                    patch = rgb[cy0:cy1, cx0:cx1, :]
+                    sub_rgb = resized[sy0:sy1, sx0:sx1, :]
+                    sub_mask = mask[sy0:sy1, sx0:sx1]
+                    patch[sub_mask] = sub_rgb[sub_mask]
+                    rgb[cy0:cy1, cx0:cx1, :] = patch
+
+        # HUD text with background box and scaled font for readability
+        timer_text = f"{int(self._elapsed_time):d}s"
+        energy_pct = int(round(self._energy * 100))
+        energy_text = f"{energy_pct}%"
+        scale = 2
+        self._draw_hud_label(rgb, 2, 2, timer_text, scale)
+        energy_w = self._text_width(energy_text) * scale
+        self._draw_hud_label(
+            rgb, self.frame_width - energy_w - 4, 2, energy_text, scale
+        )
+
+        return rgb
+
+    def _get_sprite(self) -> Tuple[np.ndarray | None, Tuple[int, int, int] | None]:
+        """Load and cache the penguin sprite as an RGB numpy array.
+
+        Uses tkinter.PhotoImage (std lib) to decode PNG without extra deps.
+        Falls back to None if tkinter or image loading is unavailable.
+        """
+        if self._sprite_rgb is not None and self._sprite_bg_rgb is not None:
+            return self._sprite_rgb, self._sprite_bg_rgb
+        try:
+            import tkinter as tk
+        except Exception:
+            return None, None
+
+        try:
+            # Resolve asset path from package resources
+            with pkg_resources.as_file(
+                pkg_resources.files("rlo.assets").joinpath("peng.png")
+            ) as sprite_path:
+                root = tk.Tk()
+                root.withdraw()  # prevent window
+                img = tk.PhotoImage(file=str(sprite_path))
+                sw = img.width()
+                sh = img.height()
+                # Build numpy array of RGB from image.get
+                arr = np.zeros((sh, sw, 3), dtype=np.uint8)
+                # Use top-left pixel as background key (for transparency)
+                bg = img.get(0, 0)
+                if isinstance(bg, tuple):
+                    bg_rgb = (int(bg[0]), int(bg[1]), int(bg[2]))
+                else:
+                    # Format like '#RRGGBB'
+                    bg = str(bg)
+                    bg_rgb = (
+                        int(bg[1:3], 16),
+                        int(bg[3:5], 16),
+                        int(bg[5:7], 16),
+                    )
+                for y in range(sh):
+                    for x in range(sw):
+                        pix = img.get(x, y)
+                        if isinstance(pix, tuple):
+                            r, g, b = pix[:3]
+                        else:
+                            s = str(pix)
+                            r, g, b = int(s[1:3], 16), int(s[3:5], 16), int(s[5:7], 16)
+                        arr[y, x, 0] = int(r)
+                        arr[y, x, 1] = int(g)
+                        arr[y, x, 2] = int(b)
+                # Keep a reference to root to avoid early GC until cached
+                self._sprite_rgb = arr
+                self._sprite_bg_rgb = (int(bg_rgb[0]), int(bg_rgb[1]), int(bg_rgb[2]))
+                try:
+                    root.destroy()
+                except Exception:
+                    pass
+                return self._sprite_rgb, self._sprite_bg_rgb
+        except Exception:
+            return None, None
+
+    def _draw_circle_rgb(
+        self, frame: np.ndarray, cx: int, cy: int, r: int, color: Tuple[int, int, int]
+    ) -> None:
+        h, w, _ = frame.shape
+        r2 = r * r
+        x0 = max(0, cx - r)
+        x1 = min(w - 1, cx + r)
+        y0 = max(0, cy - r)
+        y1 = min(h - 1, cy + r)
+        col = np.array(color, dtype=np.uint8)
+        for py in range(y0, y1 + 1):
+            dy = py - cy
+            for px in range(x0, x1 + 1):
+                dx = px - cx
+                if dx * dx + dy * dy <= r2:
+                    frame[py, px, :] = col
+
+    # --- Sprite helpers ---
+    def _resize_sprite_with_mask(
+        self,
+        sprite_rgb: np.ndarray,
+        bg_rgb: Tuple[int, int, int],
+        out_h: int,
+        out_w: int,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Bilinear resize with a color-key alpha mask preserved via soft alpha.
+
+        Returns (resized_rgb, alpha_mask_bool).
+        """
+        sh, sw, _ = sprite_rgb.shape
+        # Alpha 1 for non-background
+        alpha = ~(
+            (sprite_rgb[:, :, 0] == bg_rgb[0])
+            & (sprite_rgb[:, :, 1] == bg_rgb[1])
+            & (sprite_rgb[:, :, 2] == bg_rgb[2])
+        )
+        alpha = alpha.astype(np.float32)
+
+        # Source coordinates grid
+        y_src = (np.linspace(0.0, sh - 1.0, out_h)).astype(np.float32)
+        x_src = (np.linspace(0.0, sw - 1.0, out_w)).astype(np.float32)
+        yy, xx = np.meshgrid(y_src, x_src, indexing="ij")
+
+        y0 = np.floor(yy).astype(int)
+        x0 = np.floor(xx).astype(int)
+        y1 = np.clip(y0 + 1, 0, sh - 1)
+        x1 = np.clip(x0 + 1, 0, sw - 1)
+        wy = (yy - y0).astype(np.float32)
+        wx = (xx - x0).astype(np.float32)
+
+        def bilinear(channel: np.ndarray) -> np.ndarray:
+            c00 = channel[y0, x0]
+            c01 = channel[y0, x1]
+            c10 = channel[y1, x0]
+            c11 = channel[y1, x1]
+            c0 = c00 * (1 - wx) + c01 * wx
+            c1 = c10 * (1 - wx) + c11 * wx
+            return c0 * (1 - wy) + c1 * wy
+
+        r = bilinear(sprite_rgb[:, :, 0].astype(np.float32))
+        g = bilinear(sprite_rgb[:, :, 1].astype(np.float32))
+        b = bilinear(sprite_rgb[:, :, 2].astype(np.float32))
+        a = bilinear(alpha)
+        resized = np.stack([r, g, b], axis=-1)
+        resized = np.clip(resized, 0, 255).astype(np.uint8)
+        mask = a > 0.5
+        return resized, mask
+
+    # --- HUD helpers ---
+    def _draw_rect_alpha(
+        self,
+        frame: np.ndarray,
+        x0: int,
+        y0: int,
+        x1: int,
+        y1: int,
+        color: Tuple[int, int, int],
+        alpha: float,
+    ) -> None:
+        h, w, _ = frame.shape
+        x0 = max(0, min(w, x0))
+        x1 = max(0, min(w, x1))
+        y0 = max(0, min(h, y0))
+        y1 = max(0, min(h, y1))
+        if x1 <= x0 or y1 <= y0:
+            return
+        col = np.array(color, dtype=np.float32)
+        patch = frame[y0:y1, x0:x1, :].astype(np.float32)
+        patch = (1 - alpha) * patch + alpha * col
+        frame[y0:y1, x0:x1, :] = np.clip(patch, 0, 255).astype(np.uint8)
+
+    def _draw_hud_label(
+        self, frame: np.ndarray, x: int, y: int, text: str, scale: int
+    ) -> None:
+        pad = 2
+        w = self._text_width(text) * scale
+        h = 5 * scale
+        # Background
+        self._draw_rect_alpha(
+            frame, x - pad, y - pad, x + w + pad, y + h + pad, (0, 0, 0), 0.45
+        )
+        # Shadow
+        self._draw_text_rgb(frame, x + 1, y + 1, text, (0, 0, 0), scale)
+        # Text
+        self._draw_text_rgb(frame, x, y, text, (255, 255, 255), scale)
+
+    def _draw_text_rgb(
+        self,
+        frame: np.ndarray,
+        x: int,
+        y: int,
+        text: str,
+        color: Tuple[int, int, int],
+        scale: int = 1,
+    ) -> None:
+        h, w, _ = frame.shape
+        col = np.array(color, dtype=np.uint8)
+        for i, ch in enumerate(text):
+            glyph = self._FONT.get(ch)
+            if glyph is None:
+                continue
+            gx = x + i * (3 * scale + 1)
+            for r, bits in enumerate(glyph):
+                for rr in range(scale):
+                    py = y + r * scale + rr
+                    if py < 0 or py >= h:
+                        continue
+                    for c in range(3):
+                        if (bits >> (2 - c)) & 1:
+                            for cc in range(scale):
+                                px = gx + c * scale + cc
+                                if 0 <= px < w:
+                                    frame[py, px, :] = col
 
     def _is_gap_at(self, x_position: float) -> bool:
         """Return True if the given world x position lies within a gap."""

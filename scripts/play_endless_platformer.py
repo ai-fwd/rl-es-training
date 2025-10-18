@@ -47,8 +47,9 @@ class PlayerApp:
         self.root.title("Endless Platformer Viewer")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-        image = self.observation["image"]
-        self.frame_height, self.frame_width = image.shape[:2]
+        # Use RGB frames from env.render() for nicer display
+        init_rgb = self.env.render()
+        self.frame_height, self.frame_width = init_rgb.shape[:2]
         self.scale = PIXEL_SCALE
         self.canvas = tk.Canvas(
             self.root,
@@ -71,7 +72,7 @@ class PlayerApp:
         self.root.bind("<KeyPress>", self._on_key_press)
         self.root.bind("<KeyRelease>", self._on_key_release)
 
-        self._color_cache = tuple(f"#{v:02x}{v:02x}{v:02x}" for v in range(256))
+        # No grayscale cache; we render full RGB
         self._running = True
         self._schedule_next_frame()
 
@@ -106,14 +107,20 @@ class PlayerApp:
         if terminated or truncated:
             self.observation, _ = self.env.reset()
 
-        self._draw_frame(self.observation["image"][..., 0])
+        # Draw the RGB frame from the environment's color renderer
+        rgb = self.env.render()
+        self._draw_frame(rgb)
         self._schedule_next_frame()
 
     def _draw_frame(self, frame: np.ndarray) -> None:
-        rows = [
-            "{" + " ".join(self._color_cache[pixel] for pixel in row) + "}"
-            for row in frame.astype(np.uint8)
-        ]
+        # frame is HxWx3 uint8 array
+        h, w, _ = frame.shape
+        # Build Tk color strings row by row
+        rows = []
+        for y in range(h):
+            row = frame[y]
+            parts = [f"#{r:02x}{g:02x}{b:02x}" for r, g, b in row]
+            rows.append("{" + " ".join(parts) + "}")
         self._base_photo.put(" ".join(rows))
         # Refresh the scaled image reference to avoid Tkinter dropping it.
         self._scaled_photo = self._base_photo.zoom(self.scale, self.scale)
@@ -130,7 +137,7 @@ class PlayerApp:
 
 def main() -> None:
     args = parse_args()
-    env = EndlessPlatformerEnv()
+    env = EndlessPlatformerEnv(render_mode="rgb_array")
     app = PlayerApp(env, seed=args.seed)
     app.run()
 
