@@ -87,3 +87,7 @@ Thumbs.db
 .env
 .env.*
 *.local
+
+# ML experiment runs
+runs/
+scratch/outcmaes/
