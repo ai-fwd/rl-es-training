@@ -269,7 +269,8 @@ class EndlessPlatformerEnv(Env):
             "image": self._render_observation(),
             "metrics": self._get_metrics_vector(),
         }
-        reward = self._character_x - previous_x
+        # Constant reward per step until energy depletes to mimic survival-only reward
+        reward = 1.0
         terminated = self._energy <= 0.0
         truncated = False
         info = {
@@ -279,6 +280,7 @@ class EndlessPlatformerEnv(Env):
             "y_velocity": self._character_vy,
             "on_ground": self._on_ground,
             "fell": fell,
+            "can_eat": orb is not None,
             "energy": self._energy,
             "energy_max": self.energy_max_overfill,
             "elapsed_time_s": self._elapsed_time,
