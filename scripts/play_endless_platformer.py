@@ -22,17 +22,13 @@ import argparse
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
 from rlo.envs.endless_platformer import EndlessPlatformerEnv
-from rlo.policies.endless_policy import (
-    ACTION_LABELS,
-    FeatureExtractor,
-    PolicyBundle,
-    load_policy_bundle,
-)
+from rlo.features.param_feature_extractors import FEATURE_NAMES, make_basic_features
+from rlo.utils.serialization import PolicyBundle
 
 PIXEL_SCALE_DEFAULT = 3  # Scale factor for enlarging the viewport display.
 
@@ -91,17 +87,15 @@ class PolicyController:
     deterministic: bool
 
     def __post_init__(self) -> None:
-        self.extractor = FeatureExtractor(self.bundle.feature_config)
+        self.extractor = make_basic_features
 
     def reset(self) -> None:
-        self.extractor.reset()
+        pass
 
-    def act(self, observation: Dict, info: Dict) -> Tuple[int, Dict]:
+    def act(self, observation: Dict, info: Dict, prev_action: int) -> Tuple[int, Dict]:
         """Return an environment action id and diagnostic details."""
-        features = self.extractor.extract(observation, info)
-        action_id, diagnostics = self.bundle.policy.select_action(
-            features, deterministic=self.deterministic
-        )
+        features = self.extractor(observation, info, prev_action)
+        action_id, diagnostics = self.bundle.policy.act(features, info)
         diagnostics = dict(diagnostics)
         diagnostics["features"] = features
         return action_id, diagnostics
@@ -110,8 +104,11 @@ class PolicyController:
 class ScratchpadPanel:
     """Tkinter widget that renders policy insights alongside the viewport."""
 
-    def __init__(self, parent: tk.Misc, bundle: PolicyBundle) -> None:
+    def __init__(
+        self, parent: tk.Misc, bundle: PolicyBundle, action_labels: Dict[int, str]
+    ) -> None:
         self._bundle = bundle
+        self._action_labels = action_labels
         self._frame = tk.Frame(parent, padx=10, pady=10, bg="#1e1e1e")
         self._frame.configure(highlightbackground="#444", highlightthickness=1)
 
@@ -193,7 +190,7 @@ class ScratchpadPanel:
         info_before: Dict,
         info_after: Dict,
     ) -> None:
-        action_label = ACTION_LABELS.get(action_id, f"id={action_id}")
+        action_label = self._action_labels.get(action_id, f"id={action_id}")
         self._step_var.set(f"Step: {step}")
         self._action_var.set(f"Action: {action_label.upper()}")
         energy = float(metrics[0])
@@ -203,14 +200,14 @@ class ScratchpadPanel:
 
         probs = diagnostics["probabilities"]
         prob_lines = []
-        for idx, env_action in enumerate(self._bundle.policy.action_ids):
-            label = ACTION_LABELS.get(env_action, str(env_action)).upper()
+        for idx, env_action in enumerate(self._action_labels.keys()):
+            label = self._action_labels.get(env_action, str(env_action)).upper()
             prob_lines.append(f"{label:>8}: {probs[idx]:5.2f}")
         self._prob_var.set("\n".join(prob_lines))
 
         features = diagnostics["features"]
         contributions = diagnostics["contributions"][diagnostics["local_index"]]
-        aero = list(zip(self._bundle.policy.feature_names, features, contributions))
+        aero = list(zip(FEATURE_NAMES, features, contributions))
         aero.sort(key=lambda item: abs(item[2]), reverse=True)
         lines = [
             f"{name:>22}: {value:+.3f}  Δlogit={impact:+.3f}"
@@ -281,7 +278,7 @@ class PlayerApp:
         self.scratchpad = None
         if self.show_scratchpad and self.policy_controller:
             self.scratchpad = ScratchpadPanel(
-                self._container, self.policy_controller.bundle
+                self._container, self.policy_controller.bundle, self.env.ACTION_LABELS
             )
             self.scratchpad.frame.pack(side="right", fill="y", padx=8, pady=8)
 
@@ -325,16 +322,20 @@ class PlayerApp:
         if not self._running:
             return
 
+        prev_action = self.action
         current_obs = self.observation
         current_info = self.info
         current_metrics = current_obs["metrics"]
 
         if self.policy_controller is not None:
-            action, diagnostics = self.policy_controller.act(current_obs, current_info)
+            action, diagnostics = self.policy_controller.act(
+                current_obs, current_info, prev_action
+            )
         else:
             action = self._resolve_manual_action()
             diagnostics = None
 
+        self.action = action
         next_obs, reward, terminated, truncated, next_info = self.env.step(action)
         self.observation, self.info = next_obs, next_info
         self._step_counter += 1

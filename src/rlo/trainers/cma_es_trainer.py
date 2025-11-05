@@ -1,24 +1,27 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Dict
+import time
+from typing import Any, Callable, Dict, Tuple
 
 import cma
 import numpy as np
 
 from rlo.evaluators.evaluate import evaluate_candidate
 from rlo.policies.param_base import Policy
+from rlo.utils.logging import GenerationStats
+from rlo.utils.serialization import PolicyBundle
 
 
 def train_cma_es(
     make_policy: Callable[[], Policy],
-    make_features: Callable[[Dict[str, Any], Dict[str, Any], int, bool], np.ndarray],
+    make_features: Callable[[Dict[str, Any], Dict[str, Any], int], np.ndarray],
     generations: int = 60,
     pop_multiplier: float = 1.0,
     init_sigma: float = 0.5,
     base_seed: int = 42,
     horizon: int = 1800,
-) -> Dict[str, Any]:
+) -> Tuple[PolicyBundle, list[GenerationStats]]:
     """Trains a policy using CMA-ES in parameter space.
 
     Args:
@@ -64,8 +67,10 @@ def train_cma_es(
         },
     )
 
-    best_val, best_params = -np.inf, None
+    history: list[GenerationStats] = []
+    global_best, best_params = -np.inf, None
     for gen in range(generations):
+        ask_time = time.perf_counter()  # track time taken for evaluations
         X = es.ask()
 
         losses = []
@@ -108,6 +113,7 @@ def train_cma_es(
             losses.append(-ret)  # CMA-ES minimizes
 
         es.tell(X, losses)
+        elapsed = time.perf_counter() - ask_time  # time taken for evaluations
         es.disp()
 
         # vectorize all the candidate returns
@@ -115,20 +121,43 @@ def train_cma_es(
         gen_best = float(ret_array.max())
 
         # find the global best policy parameters
-        if gen_best > best_val:
-            best_val = gen_best
+        if gen_best > global_best:
+            global_best = gen_best
             best_params = X[
                 int(ret_array.argmax())
             ].copy()  # store a copy so it's not overwritten
 
+        stats = GenerationStats(
+            generation=gen,
+            wall_time_s=elapsed,
+            best_reward=gen_best,
+            mean_reward=0,
+            median_reward=0,
+            reward_std=0,
+            sigma=es.sigma,
+        )
+        history.append(stats)
+
         print(
             f"[Gen {gen:03d}] pop_mean={ret_array.mean():.2f} "
-            f"pop_best={gen_best:.2f} global_best={best_val:.2f}"
+            f"pop_best={gen_best:.2f} global_best={global_best:.2f}"
         )
 
-    return {
-        "best_return": best_val,
-        "best_params": best_params,
-        "dim": num_params,
-        "popsize": lam,
-    }
+        if es.stop():
+            print("CMA-ES stopping criteria met. Ending training.")
+            break
+
+    # After training, create the best policy for return
+    best_policy = make_policy()
+    if best_params is not None:
+        best_policy.set_params(best_params)
+
+    # create a policy bundle to return
+    return PolicyBundle(
+        policy=best_policy,
+        metadata={
+            "best_return": global_best,
+            "dim": num_params,
+            "popsize": lam,
+        },
+    ), history

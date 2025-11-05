@@ -7,7 +7,7 @@ Feature extractions occurs outside of the policy.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import numpy as np
 
@@ -34,8 +34,10 @@ class Policy(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def act(self, features: np.ndarray, info: Dict[str, Any]) -> int:
-        """Given the current features and info, returns the action to take.
+    def act(
+        self, features: np.ndarray, info: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, np.ndarray]]:
+        """Given the current features and info, returns the action to take + some diagnostics.
 
         Args:
             features: A 1D numpy array of features representing the current observation.

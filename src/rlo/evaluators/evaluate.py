@@ -12,7 +12,7 @@ from rlo.policies.param_base import Policy
 def evaluate_candidate(
     params: np.ndarray,
     make_policy: Callable[[], Policy],
-    make_features: Callable[[Dict[str, Any], Dict[str, Any], int, bool], np.ndarray],
+    make_features: Callable[[Dict[str, Any], Dict[str, Any], int], np.ndarray],
     horizon: int = 1800,
     seed: int = 0,
 ) -> float:
@@ -28,22 +28,17 @@ def evaluate_candidate(
         natural_drain_per_sec=0.1, move_drain_per_sec=0.1, jump_drain=0.25, seed=seed
     )
     obs, info = env.reset(seed=seed)
-    prev_action, prev_on_ground = 0, bool(info.get("on_ground", True))
+    prev_action = 0
     total_reward = 0.0
 
     for _ in range(horizon):
-        features = make_features(obs, info, prev_action, prev_on_ground)
-        action = policy.act(features, info)
-
-        # avoid repeated JUMPs when in air
-        if not info.get("on_ground", True) and action == 2:
-            action = 0  # NOOP
+        features = make_features(obs, info, prev_action)
+        action, _ = policy.act(features, info)
 
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += float(reward)
 
         prev_action = action
-        prev_on_ground = bool(info.get("on_ground", True))
 
         if terminated or truncated:
             break

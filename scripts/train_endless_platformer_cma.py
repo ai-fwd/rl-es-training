@@ -36,6 +36,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import matplotlib
 import numpy as np
+from rlo.utils.feature_extractors import BasicFeatureExtractor
+
+from rlo.policies.param_linear import ACTION_LABELS, ACTION_MAPPING
+from rlo.utils.serialization import PolicyBundle
 
 matplotlib.use("Agg")  # Use non-GUI backend
 
@@ -48,13 +52,10 @@ import cma
 
 from rlo.envs.endless_platformer import EndlessPlatformerEnv
 from rlo.policies.endless_policy import (
-    ACTION_LABELS,
-    ACTION_MAPPING,
-    FeatureExtractor,
     FeatureExtractorConfig,
     LinearPolicy,
-    PolicyBundle,
 )
+from rlo.utils.logging import GenerationStats
 
 # ---------------------------------------------------------------------------
 # Configuration data classes
@@ -79,30 +80,6 @@ class TrainingConfig:
         data = asdict(self)
         data["save_dir"] = str(self.save_dir)
         return data
-
-
-@dataclass
-class GenerationStats:
-    """Book-keeping structure stored in ``history.json``."""
-
-    generation: int
-    wall_time_s: float
-    best_reward: float
-    mean_reward: float
-    median_reward: float
-    reward_std: float
-    sigma: float
-
-    def to_dict(self) -> Dict[str, float]:
-        return {
-            "generation": int(self.generation),
-            "wall_time_s": float(self.wall_time_s),
-            "best_reward": float(self.best_reward),
-            "mean_reward": float(self.mean_reward),
-            "median_reward": float(self.median_reward),
-            "reward_std": float(self.reward_std),
-            "sigma": float(self.sigma),
-        }
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +115,7 @@ class RolloutRunner:
     def __init__(
         self,
         env: EndlessPlatformerEnv,
-        feature_extractor: FeatureExtractor,
+        feature_extractor: BasicFeatureExtractor,
         max_steps: int,
     ) -> None:
         self._env = env
@@ -238,7 +215,7 @@ class CMAESTrainer:
         self.save_dir = config.save_dir
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        self.feature_extractor = FeatureExtractor(FeatureExtractorConfig())
+        self.feature_extractor = BasicFeatureExtractor(FeatureExtractorConfig())
         self.n_features = self.feature_extractor.size
         self.action_ids = ACTION_MAPPING
         self.n_actions = len(self.action_ids)

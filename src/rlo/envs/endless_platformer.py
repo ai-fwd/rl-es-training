@@ -34,6 +34,13 @@ class EndlessPlatformerEnv(Env):
     JUMP = 2
     EAT = 3
 
+    ACTION_MAPPING: Tuple[int, int, int] = (NOOP, FORWARD, EAT)
+    ACTION_LABELS: Dict[int, str] = {
+        NOOP: "noop",
+        FORWARD: "forward",
+        EAT: "eat",
+    }
+
     def __init__(
         self,
         *,

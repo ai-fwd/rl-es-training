@@ -1,20 +1,26 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Dict
 
-import numpy as np
-
-from rlo.features.param_basic import make_basic_features
+from rlo.features.param_feature_extractors import make_basic_features
 from rlo.policies.param_linear import ParamLinearPolicy
 from rlo.trainers.cma_es_trainer import train_cma_es
 
 
 def make_policy() -> ParamLinearPolicy:
-    return ParamLinearPolicy(n_actions=4, n_features=8)
+    return ParamLinearPolicy(n_actions=4, n_features=7)
+
+
+def write_json(path: Path, payload: Dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
 
 
 if __name__ == "__main__":
-    result = train_cma_es(
+    bundle, history = train_cma_es(
         make_policy=make_policy,
         make_features=make_basic_features,
         generations=60,
@@ -24,13 +30,21 @@ if __name__ == "__main__":
         horizon=1800,  # 30s seconds at 60 FPS
     )
 
-    best_params = result["best_params"]
     print("\n=== Training complete ===")
-    print("Best return:", result["best_return"])
-    print("Dim:", result["dim"], " Popsize:", result["popsize"])
 
-    # Save the best parameters to a .npz for later use
-    if best_params is not None:
-        Path("runs/basic").mkdir(parents=True, exist_ok=True)
-        np.savez("runs/basic/best_linear_policy.npz", theta=best_params)
-        print("Saved: runs/basic/best_linear_policy.npz")
+    # Save the training results
+    save_dir = Path("runs/basic")
+    save_dir.mkdir(parents=True, exist_ok=True)
+    history_path = save_dir / "history.json"
+    write_json(
+        history_path,
+        {
+            "history": [s.to_dict() for s in history],
+        },
+    )
+    print(f"Wrote history to {history_path}")
+
+    policy_path = save_dir / "best_policy.npz"
+    bundle.save(policy_path)
+    print(f"Saved best policy bundle to {policy_path}")
+    print("Best policy metadata:", json.dumps(bundle.metadata, indent=2))
