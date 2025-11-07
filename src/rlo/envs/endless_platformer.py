@@ -159,12 +159,14 @@ class EndlessPlatformerEnv(Env):
     ) -> Tuple[Dict, Dict]:
         """Reset the environment state."""
         del options
+
         if seed is not None:
             self._seed = seed
-        if self.np_random is None or seed is not None:
-            self.np_random, actual_seed = seeding.np_random(self._seed)
-            self._seed = actual_seed
-            print(f"Environment seed set to {actual_seed}.")
+        else:
+            self.np_random, self._seed = seeding.np_random(None)
+
+        super().reset(seed=self._seed)
+        print(f"Environment using seed: {self.np_random_seed}.")
 
         self._character_x = 1.0
         self._character_y = self.ground_height

@@ -236,6 +236,7 @@ class PlayerApp:
         show_scratchpad: bool = False,
         pixel_scale: int = PIXEL_SCALE_DEFAULT,
     ) -> None:
+        self.seed = seed
         self.env = env
         self.policy_controller = (
             PolicyController(policy_bundle, deterministic=deterministic_policy)
@@ -253,7 +254,7 @@ class PlayerApp:
         self._container = tk.Frame(self.root, bg="#1b1b1b")
         self._container.pack(fill="both", expand=True)
 
-        self.observation, self.info = self.env.reset(seed=seed)
+        self.observation, self.info = self.env.reset(seed=self.seed)
         if self.policy_controller:
             self.policy_controller.reset()
 
@@ -340,7 +341,7 @@ class PlayerApp:
         self._step_counter += 1
 
         if terminated or truncated:
-            self.observation, self.info = self.env.reset()
+            self.observation, self.info = self.env.reset(seed=self.seed)
             if self.policy_controller:
                 self.policy_controller.reset()
             if self.scratchpad:
@@ -403,6 +404,7 @@ def main() -> None:
         move_drain_per_sec=0.1,
         jump_drain=0.25,
         render_mode="rgb_array",
+        seed=args.seed,
     )
     app = PlayerApp(
         env,

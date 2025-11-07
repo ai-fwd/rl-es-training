@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 from typing import Dict
 
-from rlo.features.param_feature_extractors import make_basic_features
-from rlo.policies.param_linear import ParamLinearPolicy
-from rlo.trainers.cma_es_trainer import train_cma_es
+from rlo.features import make_basic_features
+from rlo.policies import ParamLinearPolicy
+from rlo.trainers import train_cma_es
 
 
 def make_policy() -> ParamLinearPolicy:
