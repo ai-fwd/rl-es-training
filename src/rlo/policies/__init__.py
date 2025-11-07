@@ -1,13 +1,17 @@
 """Agent utilities and policy definitions for RLO environments."""
 
-from ..utils.serialization import PolicyBundle
 from .endless_policy import (
     LinearPolicy,
-    load_policy_bundle,
+)
+from .param_base import (
+    Policy,
+)
+from .param_linear import (
+    ParamLinearPolicy,
 )
 
 __all__ = [
     "LinearPolicy",
-    "PolicyBundle",
-    "load_policy_bundle",
+    "Policy",
+    "ParamLinearPolicy",
 ]

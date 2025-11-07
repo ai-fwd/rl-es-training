@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 
-from .param_base import Policy
+from . import Policy
 
 
 @dataclass
@@ -54,6 +56,7 @@ class ParamLinearPolicy(Policy):
         info = {
             "local_index": selected_action,
             "logits": logits,
+            "probabilities": F.softmax(torch.tensor(logits), dim=-1).numpy(),
             "contributions": feature_contributions,
         }
 

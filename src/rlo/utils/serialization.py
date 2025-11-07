@@ -5,9 +5,8 @@ from typing import Dict
 
 import numpy as np
 
-from rlo.features.param_feature_extractors import FEATURE_NAMES
-from rlo.policies.param_base import Policy
-from rlo.policies.param_linear import ParamLinearPolicy
+from rlo.features import FEATURE_NAMES
+from rlo.policies import ParamLinearPolicy, Policy
 
 
 @dataclass

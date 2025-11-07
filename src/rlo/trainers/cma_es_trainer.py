@@ -143,9 +143,10 @@ def train_cma_es(
             f"pop_best={gen_best:.2f} global_best={global_best:.2f}"
         )
 
-        if es.stop():
-            print("CMA-ES stopping criteria met. Ending training.")
-            break
+        # For now, we run for a fixed number of generations without early stopping.
+        # if es.stop():
+        #     print("CMA-ES stopping criteria met. Ending training.")
+        #     break
 
     # After training, create the best policy for return
     best_policy = make_policy()

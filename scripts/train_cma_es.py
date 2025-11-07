@@ -10,7 +10,7 @@ from rlo.trainers.cma_es_trainer import train_cma_es
 
 
 def make_policy() -> ParamLinearPolicy:
-    return ParamLinearPolicy(n_actions=4, n_features=7)
+    return ParamLinearPolicy(n_actions=3, n_features=7)
 
 
 def write_json(path: Path, payload: Dict[str, object]) -> None:
@@ -24,7 +24,7 @@ if __name__ == "__main__":
         make_policy=make_policy,
         make_features=make_basic_features,
         generations=60,
-        init_sigma=0.5,
+        init_sigma=0.6,
         pop_multiplier=1.0,
         base_seed=0,
         horizon=1800,  # 30s seconds at 60 FPS

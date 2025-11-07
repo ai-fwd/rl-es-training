@@ -31,14 +31,15 @@ class EndlessPlatformerEnv(Env):
 
     NOOP = 0
     FORWARD = 1
-    JUMP = 2
-    EAT = 3
+    EAT = 2
+    JUMP = 3
 
     ACTION_MAPPING: Tuple[int, int, int] = (NOOP, FORWARD, EAT)
     ACTION_LABELS: Dict[int, str] = {
         NOOP: "noop",
         FORWARD: "forward",
         EAT: "eat",
+        # JUMP: "jump",
     }
 
     def __init__(
@@ -163,6 +164,7 @@ class EndlessPlatformerEnv(Env):
         if self.np_random is None or seed is not None:
             self.np_random, actual_seed = seeding.np_random(self._seed)
             self._seed = actual_seed
+            print(f"Environment seed set to {actual_seed}.")
 
         self._character_x = 1.0
         self._character_y = self.ground_height

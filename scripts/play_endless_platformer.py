@@ -26,8 +26,8 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-from rlo.envs.endless_platformer import EndlessPlatformerEnv
-from rlo.features.param_feature_extractors import FEATURE_NAMES, make_basic_features
+from rlo.envs import EndlessPlatformerEnv
+from rlo.features import FEATURE_NAMES, make_basic_features
 from rlo.utils.serialization import PolicyBundle
 
 PIXEL_SCALE_DEFAULT = 3  # Scale factor for enlarging the viewport display.
@@ -88,14 +88,16 @@ class PolicyController:
 
     def __post_init__(self) -> None:
         self.extractor = make_basic_features
+        self._prev_action = 0  # Start with NOOP
 
     def reset(self) -> None:
-        pass
+        self._prev_action = 0
 
-    def act(self, observation: Dict, info: Dict, prev_action: int) -> Tuple[int, Dict]:
+    def act(self, observation: Dict, info: Dict) -> Tuple[int, Dict]:
         """Return an environment action id and diagnostic details."""
-        features = self.extractor(observation, info, prev_action)
+        features = self.extractor(observation, info, self._prev_action)
         action_id, diagnostics = self.bundle.policy.act(features, info)
+        self._prev_action = action_id
         diagnostics = dict(diagnostics)
         diagnostics["features"] = features
         return action_id, diagnostics
@@ -210,7 +212,7 @@ class ScratchpadPanel:
         aero = list(zip(FEATURE_NAMES, features, contributions))
         aero.sort(key=lambda item: abs(item[2]), reverse=True)
         lines = [
-            f"{name:>22}: {value:+.3f}  Δlogit={impact:+.3f}"
+            f"{name:>22}: {value:+.3f}  logit={impact:+.3f}"
             for name, value, impact in aero[:8]
         ]
         self._features_label.config(text="\n".join(lines))
@@ -322,15 +324,12 @@ class PlayerApp:
         if not self._running:
             return
 
-        prev_action = self.action
         current_obs = self.observation
         current_info = self.info
         current_metrics = current_obs["metrics"]
 
         if self.policy_controller is not None:
-            action, diagnostics = self.policy_controller.act(
-                current_obs, current_info, prev_action
-            )
+            action, diagnostics = self.policy_controller.act(current_obs, current_info)
         else:
             action = self._resolve_manual_action()
             diagnostics = None
@@ -394,15 +393,15 @@ def main() -> None:
 
     bundle: Optional[PolicyBundle] = None
     if args.policy is not None:
-        bundle = load_policy_bundle(args.policy)
+        bundle = PolicyBundle.load(args.policy)
         print(f"Loaded policy bundle from {args.policy}")
         if not args.scratchpad:
             print("Tip: re-run with --scratchpad to see the policy diagnostics panel.")
 
     env = EndlessPlatformerEnv(
-        # natural_drain_per_sec=0.1,
-        # move_drain_per_sec=0.1,
-        # jump_drain=0.25,
+        natural_drain_per_sec=0.1,
+        move_drain_per_sec=0.1,
+        jump_drain=0.25,
         render_mode="rgb_array",
     )
     app = PlayerApp(
