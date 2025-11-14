@@ -405,6 +405,7 @@ def main() -> None:
         jump_drain=0.25,
         render_mode="rgb_array",
         seed=args.seed,
+        is_training=False
     )
     app = PlayerApp(
         env,

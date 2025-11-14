@@ -6,7 +6,7 @@ from typing import Dict
 import numpy as np
 
 from rlo.features import FEATURE_NAMES
-from rlo.policies import ParamLinearPolicy, Policy
+from rlo.policies import ParamLinearPolicy, Policy, ParamNonLinearPolicy
 
 
 @dataclass
@@ -21,13 +21,9 @@ class PolicyBundle:
         return {
             "n_actions": (
                 self.policy.n_actions
-                if isinstance(self.policy, ParamLinearPolicy)
-                else None
             ),
             "n_features": (
                 self.policy.n_features
-                if isinstance(self.policy, ParamLinearPolicy)
-                else None
             ),
             "params": self.policy.get_params(),
             "feature_names": np.array(FEATURE_NAMES, dtype=object),
@@ -50,7 +46,7 @@ class PolicyBundle:
         n_features = data["n_features"].item()
         params = data["params"]
         metadata = json.loads(data["metadata"].item())
-        policy = ParamLinearPolicy(
+        policy = ParamNonLinearPolicy(
             n_actions=n_actions,
             n_features=n_features,
         )

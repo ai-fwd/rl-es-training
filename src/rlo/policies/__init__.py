@@ -7,7 +7,12 @@ from .param_linear import (
     ParamLinearPolicy,
 )
 
+from .param_nonlinear import (
+    ParamNonLinearPolicy,
+)
+
 __all__ = [
     "Policy",
     "ParamLinearPolicy",
+    "ParamNonLinearPolicy",
 ]

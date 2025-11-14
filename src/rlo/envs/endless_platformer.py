@@ -56,6 +56,7 @@ class EndlessPlatformerEnv(Env):
         energy_pickup_amount: float = 0.25,
         energy_max_overfill: float = 1.5,
         seed: int | None = None,
+        is_training: bool = True,
     ) -> None:
         """Initialise the environment.
 
@@ -70,6 +71,7 @@ class EndlessPlatformerEnv(Env):
         self.render_mode = render_mode
         self._seed = seed
         self.np_random = None
+        self.is_training = is_training
 
         # Simulation timing and physics constants.
         self.dt = 1.0 / 60.0
@@ -166,7 +168,10 @@ class EndlessPlatformerEnv(Env):
             self.np_random, self._seed = seeding.np_random(None)
 
         super().reset(seed=self._seed)
-        print(f"Environment using seed: {self.np_random_seed}.")
+
+        # print seed when not training
+        if not self.is_training:
+            print(f"Environment using seed: {self.np_random_seed}.")
 
         self._character_x = 1.0
         self._character_y = self.ground_height
