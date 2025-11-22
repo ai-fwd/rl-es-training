@@ -7,6 +7,8 @@ from typing import Any, Callable, Dict, Tuple
 import cma
 import numpy as np
 
+
+from rlo.envs.endless_platformer import EndlessPlatformerEnv
 from rlo.evaluators.evaluate import evaluate_candidate
 from rlo.policies.param_base import Policy
 from rlo.utils.logging import GenerationStats
@@ -68,13 +70,14 @@ def train_cma_es(
     )
 
     history: list[GenerationStats] = []
-    global_best, best_params = -np.inf, None
+    global_best, best_params, global_best_gen = -np.inf, None, 0
     for gen in range(generations):
         ask_time = time.perf_counter()  # track time taken for evaluations
         X = es.ask()
 
         losses = []
         returns = []
+        policy_infos = []
 
         for i, x in enumerate(X):
             # region Seed Generation Rationale
@@ -102,7 +105,7 @@ def train_cma_es(
             seed = base_seed + gen * 997 + i
 
             # change seed per evaluation for diversity
-            ret = evaluate_candidate(
+            ret, policy_info = evaluate_candidate(
                 params=x,
                 make_policy=make_policy,
                 make_features=make_features,
@@ -111,18 +114,29 @@ def train_cma_es(
             )
             returns.append(ret)
             losses.append(-ret)  # CMA-ES minimizes
+            policy_infos.append(policy_info)
 
         es.tell(X, losses)
         elapsed = time.perf_counter() - ask_time  # time taken for evaluations
-        es.disp()
+        ##es.disp()
 
         # vectorize all the candidate returns
         ret_array = np.array(returns, dtype=np.float32)
         gen_best = float(ret_array.max())
+        gen_best_info = policy_infos[int(ret_array.argmax())]
+
+        for idx, info in enumerate(policy_infos):
+            print(f"Policy info for: Gen {gen} Itr:{idx} - Return: {returns[idx]}")
+            for x in info:
+                action = int(x['selected_action'])
+                logits = x['logits']
+                label = EndlessPlatformerEnv.ACTION_LABELS[action]
+                print(f"{action}: {label} (logits={logits.numpy()})")
 
         # find the global best policy parameters
         if gen_best > global_best:
             global_best = gen_best
+            global_best_gen = gen
             best_params = X[
                 int(ret_array.argmax())
             ].copy()  # store a copy so it's not overwritten
@@ -131,16 +145,17 @@ def train_cma_es(
             generation=gen,
             wall_time_s=elapsed,
             best_reward=gen_best,
-            mean_reward=0,
-            median_reward=0,
-            reward_std=0,
+            # mean_reward=0,
+            # median_reward=0,
+            # reward_std=0,
             sigma=es.sigma,
+            policy_info=gen_best_info,
         )
         history.append(stats)
 
         print(
             f"[Gen {gen:03d}] pop_mean={ret_array.mean():.2f} "
-            f"pop_best={gen_best:.2f} global_best={global_best:.2f}"
+            f"pop_best={gen_best:.2f} global_best={global_best:.2f} (at gen {global_best_gen}) "
         )
 
         # For now, we run for a fixed number of generations without early stopping.

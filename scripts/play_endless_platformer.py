@@ -71,6 +71,12 @@ def parse_args() -> argparse.Namespace:
         default=PIXEL_SCALE_DEFAULT,
         help="Scaling factor applied to the viewport.",
     )
+    parser.add_argument(
+        "--simulation-speed",
+        type=float,
+        default=1.0,
+        help="Multiplier for the simulation speed (1.0 = real-time).",
+    )
     return parser.parse_args()
 
 
@@ -197,7 +203,7 @@ class ScratchpadPanel:
         self._action_var.set(f"Action: {action_label.upper()}")
         energy = float(metrics[0])
         self._energy_var.set(f"Energy: {energy:.3f}")
-        flags = f"can_eat={bool(info_before.get('can_eat', False))}  on_ground={bool(info_after.get('on_ground', False))}"
+        flags = f"can_eat={bool(info_before.get('can_eat', False))} near_food={bool(info_before.get('near_food', False))} on_ground={bool(info_after.get('on_ground', False))}"
         self._state_var.set(f"Flags: {flags}")
 
         probs = diagnostics["probabilities"]
@@ -208,7 +214,7 @@ class ScratchpadPanel:
         self._prob_var.set("\n".join(prob_lines))
 
         features = diagnostics["features"]
-        contributions = diagnostics["contributions"][diagnostics["local_index"]]
+        contributions = diagnostics["contributions"][diagnostics["selected_action"]]
         aero = list(zip(FEATURE_NAMES, features, contributions))
         aero.sort(key=lambda item: abs(item[2]), reverse=True)
         lines = [
@@ -400,12 +406,13 @@ def main() -> None:
             print("Tip: re-run with --scratchpad to see the policy diagnostics panel.")
 
     env = EndlessPlatformerEnv(
-        natural_drain_per_sec=0.1,
-        move_drain_per_sec=0.1,
-        jump_drain=0.25,
         render_mode="rgb_array",
         seed=args.seed,
-        is_training=False
+        simulation_speed=args.simulation_speed,
+        is_training=False,
+        natural_drain_per_sec=0.1,
+        move_drain_per_sec=0.15,
+        jump_drain=0.2,
     )
     app = PlayerApp(
         env,

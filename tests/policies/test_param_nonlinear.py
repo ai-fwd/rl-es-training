@@ -2,11 +2,11 @@ import numpy as np
 import torch
 import pytest
 
-from rlo.policies import ParamNonLinearPolicy
+from rlo.policies import ParamNonLinearPolicy_ArgMax
 
 
 def test_param_count_matches_model():
-    pol = ParamNonLinearPolicy(n_actions=3, n_features=7)
+    pol = ParamNonLinearPolicy_ArgMax(n_actions=3, n_features=7)
 
     # count params from pytorch
     torch_param_total = sum(p.numel() for p in pol._model.parameters())
@@ -16,7 +16,7 @@ def test_param_count_matches_model():
 
 
 def test_get_set_roundtrip():
-    pol = ParamNonLinearPolicy(n_actions=3, n_features=5)
+    pol = ParamNonLinearPolicy_ArgMax(n_actions=3, n_features=5)
 
     # original params
     p1 = pol.get_params().copy()
@@ -29,7 +29,7 @@ def test_get_set_roundtrip():
 
 
 def test_set_params_changes_output():
-    pol = ParamNonLinearPolicy(n_actions=3, n_features=4)
+    pol = ParamNonLinearPolicy_ArgMax(n_actions=3, n_features=4)
 
     x = np.array([0.5, -1.0, 2.0, 0.1], dtype=np.float32)
 
@@ -49,7 +49,7 @@ def test_set_params_changes_output():
 
 
 def test_set_params_loads_known_values():
-    pol = ParamNonLinearPolicy(n_actions=2, n_features=3)
+    pol = ParamNonLinearPolicy_ArgMax(n_actions=2, n_features=3)
 
     flat = np.arange(pol.get_params().size, dtype=np.float32)
 
@@ -60,7 +60,7 @@ def test_set_params_loads_known_values():
 
 
 def test_layer1_contributions_shape():
-    pol = ParamNonLinearPolicy(n_actions=4, n_features=6)
+    pol = ParamNonLinearPolicy_ArgMax(n_actions=4, n_features=6)
 
     x = np.random.randn(6).astype(np.float32)
     action, info = pol.act(x, {})

@@ -34,12 +34,12 @@ class EndlessPlatformerEnv(Env):
     EAT = 2
     JUMP = 3
 
-    ACTION_MAPPING: Tuple[int, int, int] = (NOOP, FORWARD, EAT)
+    ACTION_MAPPING: Tuple[int, int, int, int] = (NOOP, FORWARD, EAT, JUMP)
     ACTION_LABELS: Dict[int, str] = {
         NOOP: "noop",
         FORWARD: "forward",
         EAT: "eat",
-        # JUMP: "jump",
+        JUMP: "jump",
     }
 
     def __init__(
@@ -50,11 +50,13 @@ class EndlessPlatformerEnv(Env):
         gap_probability: float = 0,
         segment_length: float = 8.0,
         # Energy mechanics (tunable)
-        natural_drain_per_sec: float = 0.01,
-        move_drain_per_sec: float = 0.01,
-        jump_drain: float = 0.05,
-        energy_pickup_amount: float = 0.25,
-        energy_max_overfill: float = 1.5,
+        natural_drain_per_sec: float = 0.02,
+        move_drain_per_sec: float = 0.03,
+        jump_drain: float = 0.1,
+        energy_pickup_amount: float = 0.10,
+        energy_max_overfill: float = 1,
+        energy_orb_spawn_distance_multiplier: float = 1.0,
+        simulation_speed: float = 1.0,
         seed: int | None = None,
         is_training: bool = True,
     ) -> None:
@@ -72,13 +74,14 @@ class EndlessPlatformerEnv(Env):
         self._seed = seed
         self.np_random = None
         self.is_training = is_training
+        self.simulation_speed = max(1.0, float(simulation_speed))
 
         # Simulation timing and physics constants.
         self.dt = 1.0 / 60.0
         self.gravity = -28.0
         self.jump_velocity = 8.0
         self.base_speed = 3.0
-        self.forward_boost = 2.5
+        self.forward_boost = 0
 
         # Character dimensions and placement.
         self.character_width = 1.4
@@ -101,6 +104,17 @@ class EndlessPlatformerEnv(Env):
         self.jump_drain = float(jump_drain)
         self.energy_pickup_amount = float(energy_pickup_amount)
         self.energy_max_overfill = float(energy_max_overfill)
+        self.energy_orb_spawn_distance_multiplier = float(
+            energy_orb_spawn_distance_multiplier
+        )
+        self.energy_orb_radius = 0.18
+        self._energy_orb_height_offsets = (
+            self.platform_thickness + self.energy_orb_radius + 0.02,
+            0.6 * self.character_height,
+            1.2 * self.character_height,
+            1.8 * self.character_height,
+        )
+        self.energy_orb_detection_radius = max(self._energy_orb_height_offsets)
 
         # Viewport configuration for rendering.
         self.frame_width = 160
@@ -149,6 +163,7 @@ class EndlessPlatformerEnv(Env):
         # Lazy-loaded sprite cache (rgb uint8) and transparency key
         self._sprite_rgb: np.ndarray | None = None
         self._sprite_bg_rgb: Tuple[int, int, int] | None = None
+        self._orb_spawn_min_x = 0.0
 
     # --------------------------------------------------------------------- #
     # Gymnasium API
@@ -178,13 +193,14 @@ class EndlessPlatformerEnv(Env):
         self._character_vy = 0.0
         self._on_ground = True
         self._last_safe_x = self._character_x
+        self._orb_spawn_min_x = self._character_x + self.energy_orb_detection_radius
 
         self._gap_positions = []
         self._generated_until = 0.0
         self._energy_orbs = []
         self._elapsed_time = 0.0
         self._energy = 1.0
-        self._generate_platform_until(self._character_x + self.view_forward + 10.0)
+        self._generate_platform_until(self._character_x + self.view_forward)
 
         self._last_frame = None
         observation = {
@@ -206,102 +222,117 @@ class EndlessPlatformerEnv(Env):
         self,
         action: int,
     ) -> Tuple[Dict, float, bool, bool, Dict]:
-        """Advance the simulation by one frame."""
+        """Advance the simulation by one or more frames (per simulation_speed)."""
         action = int(action)
         assert self.action_space.contains(action), f"{action} is not a valid action."
 
-        forward_speed = self.base_speed
-        forward_boost = self.forward_boost
-        jump_velocity = self.jump_velocity
+        repeats = max(1, int(round(self.simulation_speed)))
+        total_reward = 0.0
+        terminated = False
+        truncated = False
+        fell_any = False
+        last_forward_speed = 0.0
+        last_nearby_orb: Tuple[float, float, float] | None = None
+        for _ in range(repeats):
+            forward_speed = self.base_speed
+            forward_boost = self.forward_boost
+            jump_velocity = self.jump_velocity
 
-        # if energy is at max then you move slower until back under 1.0
-        if self._energy >= 1.0:
-            forward_speed *= 0.5
-            forward_boost *= 0.5
-            jump_velocity *= 0.5
+            # if energy is at max then you move slower until back under 1.0
+            if self._energy > 1.0:
+                forward_speed *= 0.5
+                forward_boost *= 0.5
+                jump_velocity *= 0.5
 
-        # Apply forward boost when jumping
-        if action == self.JUMP:
-            forward_speed += forward_boost
+            # Apply forward boost when jumping
+            if action == self.JUMP:
+                forward_speed += forward_boost
 
-        # Horizontal movement only when forward action is taken
-        previous_x = self._character_x
-        if action == self.FORWARD or action == self.JUMP:
-            self._character_x += forward_speed * self.dt
+            # Horizontal movement only when forward action is taken
+            if action == self.FORWARD:
+                self._character_x += forward_speed * self.dt
 
-        # Jump initiation.
-        if action == self.JUMP and self._on_ground:
-            self._character_vy = jump_velocity
-            self._on_ground = False
-            # One-shot jump drain
-            self._energy -= self.jump_drain
+            # Jump initiation.
+            if action == self.JUMP and self._on_ground:
+                self._character_vy = jump_velocity
+                self._on_ground = False
+                # One-shot jump drain
+                self._energy -= self.jump_drain
 
-        # Apply gravity.
-        self._character_vy += self.gravity * self.dt
-        self._character_y += self._character_vy * self.dt
+            # Apply gravity.
+            self._character_vy += self.gravity * self.dt
+            self._character_y += self._character_vy * self.dt
 
-        # Time and continuous drains
-        self._elapsed_time += self.dt
-        self._energy -= self.natural_drain_per_sec * self.dt
-        if action == self.FORWARD:
-            self._energy -= self.move_drain_per_sec * self.dt
-        if self._energy < 0.0:
-            self._energy = 0.0
+            # Time and continuous drains
+            self._elapsed_time += self.dt
+            self._energy -= self.natural_drain_per_sec * self.dt
+            if action == self.FORWARD:
+                self._energy -= self.move_drain_per_sec * self.dt
+            if self._energy < 0.0:
+                self._energy = 0.0
 
-        support = self._has_support()
-        fell = False
-        if support and self._character_y <= self.ground_height:
-            self._character_y = self.ground_height
-            self._character_vy = 0.0
-            self._on_ground = True
-            self._last_safe_x = self._character_x
-        else:
-            self._on_ground = False
+            support = self._has_support()
+            fell = False
+            if support and self._character_y <= self.ground_height:
+                self._character_y = self.ground_height
+                self._character_vy = 0.0
+                self._on_ground = True
+                self._last_safe_x = self._character_x
+            else:
+                self._on_ground = False
 
-        if self._character_y < self.fall_threshold:
-            # Respawn on the last safe tile to keep the rollout alive.
-            self._character_x = self._last_safe_x
-            self._character_y = self.ground_height
-            self._character_vy = 0.0
-            self._on_ground = True
-            fell = True
+            if self._character_y < self.fall_threshold:
+                # Respawn on the last safe tile to keep the rollout alive.
+                self._character_x = self._last_safe_x
+                self._character_y = self.ground_height
+                self._character_vy = 0.0
+                self._on_ground = True
+                fell = True
 
-        self._generate_platform_until(self._character_x + self.view_forward + 10.0)
-        self._prune_old_gaps(
-            self._character_x - self.view_backward - self.cleanup_margin
-        )
+            self._generate_platform_until(self._character_x + self.view_forward)
+            self._prune_old_gaps(
+                self._character_x - self.view_backward - self.cleanup_margin
+            )
 
-        # if collision with energy orb
-        orb = self._handle_energy_orbs_collision()
-        if orb is not None:
-            if action == self.EAT and self._energy < 1.0:
-                # Consume
-                self._energy = min(
-                    self.energy_max_overfill, self._energy + self.energy_pickup_amount
-                )
-                self._energy_orbs.remove(orb)
+            # if collision with energy orb
+            nearby_orb = self._get_orb_within_eat_radius()
+            orb = self._handle_energy_orbs_collision()
+            if orb is not None:
+                if action == self.EAT and self._energy < 1.0:
+                    # Consume
+                    self._energy = min(
+                        self.energy_max_overfill,
+                        self._energy + self.energy_pickup_amount,
+                    )
+                    self._energy_orbs.remove(orb)
+                    nearby_orb = self._get_orb_within_eat_radius()
+
+            total_reward += 1.0
+            fell_any = fell_any or fell
+            last_forward_speed = forward_speed
+            last_nearby_orb = nearby_orb
+            terminated = self._energy <= 0.0
+            if terminated:
+                break
 
         observation = {
             "image": self._render_observation(),
             "metrics": self._get_metrics_vector(),
         }
-        # Constant reward per step until energy depletes to mimic survival-only reward
-        reward = 1.0
-        terminated = self._energy <= 0.0
-        truncated = False
         info = {
             "x_position": self._character_x,
             "y_position": self._character_y,
-            "x_velocity": forward_speed,
+            "x_velocity": last_forward_speed,
             "y_velocity": self._character_vy,
             "on_ground": self._on_ground,
-            "fell": fell,
-            "can_eat": orb is not None,
+            "fell": fell_any,
+            "can_eat": last_nearby_orb is not None,
+            "near_food": last_nearby_orb is not None,
             "energy": self._energy,
             "energy_max": self.energy_max_overfill,
             "elapsed_time_s": self._elapsed_time,
         }
-        return observation, reward, terminated, truncated, info
+        return observation, total_reward, terminated, truncated, info
 
     def render(self) -> np.ndarray:
         """Return an RGB frame when render_mode is 'rgb_array'."""
@@ -812,6 +843,19 @@ class EndlessPlatformerEnv(Env):
             dtype=np.float32,
         )
 
+    def _get_orb_within_eat_radius(self) -> Tuple[float, float, float] | None:
+        """Return any orb that lies within the eat radius of the character."""
+        anchor_x = self._character_x
+        anchor_y = self._character_y
+        max_dist2 = self.energy_orb_detection_radius * self.energy_orb_detection_radius
+        for orb in self._energy_orbs:
+            ox, oy, _ = orb
+            dx = ox - anchor_x
+            dy = oy - anchor_y
+            if dx * dx + dy * dy <= max_dist2:
+                return orb
+        return None
+
     def _handle_energy_orbs_collision(self) -> Tuple[float, float, float] | None:
         # Character AABB
         x_left = self._character_x - (self.character_width / 2.0)
@@ -842,13 +886,15 @@ class EndlessPlatformerEnv(Env):
     ) -> None:
         # Randomly decide none/sparse/cluster
         roll = self.np_random.random()
-        if roll < 0.4:
-            return
+        
+        # Always spawn orbs for more interesting gameplay
+        # if roll < 0.1:
+        #     return
+        
         cluster = roll > 0.8
         count = int(
             self.np_random.integers(2, 5) if cluster else self.np_random.integers(1, 3)
         )
-        radius = 0.18
 
         for _ in range(count):
             if (
@@ -872,18 +918,27 @@ class EndlessPlatformerEnv(Env):
                 )
             else:
                 x = x0 + self.np_random.random() * (x1 - x0)
+            if x < self._orb_spawn_min_x:
+                x= self._orb_spawn_min_x
+            max_spawn_x = self._character_x + (
+                self.energy_orb_spawn_distance_multiplier
+                * self.energy_orb_detection_radius
+            )
+            if x > max_spawn_x:
+                x = max_spawn_x
 
             # Vertical placement variety
             mode = self.np_random.random()
             if mode < 0.35:
-                y = self.ground_height + self.platform_thickness + radius + 0.02
+                y_offset = self._energy_orb_height_offsets[0]
             elif mode < 0.7:
-                y = self.ground_height + 0.6 * self.character_height
+                y_offset = self._energy_orb_height_offsets[1]
             elif mode < 0.9:
-                y = self.ground_height + 1.2 * self.character_height
+                y_offset = self._energy_orb_height_offsets[2]
             else:
-                y = self.ground_height + 1.8 * self.character_height
-            self._energy_orbs.append((x, y, radius))
+                y_offset = self._energy_orb_height_offsets[3]
+            y = self.ground_height + y_offset
+            self._energy_orbs.append((x, y, self.energy_orb_radius))
 
     # Minimal pixel font and rasterizers
     _FONT = {
