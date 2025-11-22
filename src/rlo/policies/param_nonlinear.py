@@ -9,51 +9,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from . import Policy
-
-# A simple MLP with one hidden layer that will be used in the ParamNonLinearPolicy
-class MLP(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
-        super(MLP, self).__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, output_dim)
-
-        # turn off autograd for all params
-        for p in self.parameters():
-            p.requires_grad = False
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
+from .param_nonlinear_base import ParamNonLinearPolicy
+from rlo.policies import register_policy
 
 
 @dataclass
-class ParamNonLinearPolicy(Policy):
-    n_actions: int
-    n_features: int
-
-    def __post_init__(self):
-        # Instead of defining the weights and biases directly, we define an MLP to represent the policy
-        self._model = MLP(input_dim=self.n_features, hidden_dim=self.n_features*2, output_dim=self.n_actions)
-
-    def num_params(self) -> int:
-        """Returns the number of parameters in the nonlinear policy."""
-        # will give (input*hidden + hidden) + (hidden*out + out) = fc1+fc2 params
-        return sum(p.numel() for p in self._model.parameters()) 
-
-    def get_params(self) -> np.ndarray:
-        """Returns the current parameters of the policy as a 1D numpy array."""
-        return torch.cat([param.view(-1) for param in self._model.parameters()]).detach().numpy()
-
-    def set_params(self, params: np.ndarray) -> None:
-        """Sets the parameters of the nonlinear policy from a 1D numpy array."""
-        idx = 0
-        for p in self._model.parameters():
-            s = p.numel()
-            p_block = torch.from_numpy(params[idx:idx+s]).float()
-            p.data.copy_(p_block.view(p.size()))
-            idx += s
-
+@register_policy
+class ParamNonLinearPolicy_ArgMax(ParamNonLinearPolicy):
     def act(
         self, features: np.ndarray, info: Dict[str, Any]
     ) -> Tuple[int, Dict[str, np.ndarray]]:
@@ -66,28 +28,64 @@ class ParamNonLinearPolicy(Policy):
         x = torch.tensor(features).float()
         logits = self._model(x)
         selected_action = int(np.argmax(logits))
-
+        probabilities = F.softmax(logits, dim=-1).detach().numpy()
+        
         info = {
-            "local_index": selected_action,
+            "selected_action": selected_action,
             "logits": logits,
-            "probabilities": F.softmax(logits, dim=-1).numpy(),
+            "probabilities": probabilities,
             "contributions": layer1_feature_contributions.numpy(),
         }
 
         return selected_action, info
+    
+@dataclass
+@register_policy
+class ParamNonLinearPolicy_Stochastic(ParamNonLinearPolicy):
+    """Stochastic MLP policy with configurable temperature.
+
+    The `temperature` field is stored in the serialized payload so validation
+    and training runs can use different temperatures without code changes.
+    """
+    temperature: float = 1.0
+
+    def __post_init__(self):
+        # initialize base model
+        super().__post_init__()
+
+    def to_payload(self) -> dict:
+        return {"temperature": float(self.temperature)}
 
     @classmethod
-    def from_flat(
-        cls,
-        flat_params: np.ndarray,
-        n_actions: int,
-        n_features: int,
-    ) -> ParamNonLinearPolicy:
-        """Creates a ParamNonLinearPolicy instance from 1-D flat parameters."""
+    def from_payload(
+        cls, flat_params: np.ndarray, n_actions: int, n_features: int, policy_kwargs: dict | None = None
+    ) -> ParamNonLinearPolicy_Stochastic:
+        policy_kwargs = policy_kwargs or {}
+        return super().from_payload(flat_params, n_actions, n_features, policy_kwargs)
 
-        policy = cls(
-            n_actions=n_actions,
-            n_features=n_features,
-        )
-        policy.set_params(flat_params)
-        return policy
+    def act(
+        self, features: np.ndarray, info: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, np.ndarray]]:
+        # Compute feature contributions for explainability
+        layer1_feature_contributions = self._model.fc1.weight * features.reshape(1, -1)
+
+        # Compute logits and select action from MLP
+        x = torch.tensor(features).float()
+        logits = self._model(x)
+
+        # temperature may be set on the instance (default 1.0)
+        T = getattr(self, "temperature", 1.0)
+        probabilities = F.softmax(logits / float(T), dim=-1)
+
+        # sample an action from the probability distribution
+        dist = torch.distributions.Categorical(probs=probabilities)
+        selected_action = int(dist.sample())
+
+        info = {
+            "selected_action": selected_action,
+            "logits": logits,
+            "probabilities": probabilities.detach().numpy(),
+            "contributions": layer1_feature_contributions.numpy(),
+        }
+
+        return selected_action, info

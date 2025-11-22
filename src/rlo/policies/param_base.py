@@ -48,3 +48,27 @@ class Policy(ABC):
     def reset(self) -> None:
         """Resets any internal state of the policy between episodes, if necessary."""
         pass
+
+    def to_payload(self) -> dict:
+        """Return JSON-serializable extra kwargs for this policy.
+
+        By default no extra kwargs are exposed. Subclasses may override.
+        """
+        return {}
+
+    @classmethod
+    def from_payload(
+        cls, flat_params: np.ndarray, n_actions: int, n_features: int, policy_kwargs: dict | None = None
+    ) -> "Policy":
+        """Construct a policy from saved payload. Tries `from_flat` if present.
+
+        `policy_kwargs` is a dict of extra constructor args (may be empty).
+        """
+        # prefer an explicit from_flat if the class provides it (older code)
+        if hasattr(cls, "from_flat"):
+            return cls.from_flat(flat_params, n_actions, n_features)  # type: ignore[attr-defined]
+
+        policy_kwargs = policy_kwargs or {}
+        policy = cls(n_actions=n_actions, n_features=n_features, **policy_kwargs)
+        policy.set_params(flat_params)
+        return policy
