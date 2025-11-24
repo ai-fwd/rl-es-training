@@ -78,6 +78,7 @@ def train_cma_es(
         losses = []
         returns = []
         policy_infos = []
+        population_traces = []
 
         for i, x in enumerate(X):
             # region Seed Generation Rationale
@@ -126,12 +127,34 @@ def train_cma_es(
         gen_best_info = policy_infos[int(ret_array.argmax())]
 
         for idx, info in enumerate(policy_infos):
-            print(f"Policy info for: Gen {gen} Itr:{idx} - Return: {returns[idx]}")
-            for x in info:
-                action = int(x['selected_action'])
-                logits = x['logits']
+            #print(f"Policy info for: Gen {gen} Itr:{idx} - Return: {returns[idx]}")
+            actions = []
+            for step_idx, x in enumerate(info):
+                action = int(x["selected_action"])
+                logits = x["logits"]
                 label = EndlessPlatformerEnv.ACTION_LABELS[action]
-                print(f"{action}: {label} (logits={logits.numpy()})")
+                logits_list = (
+                    logits.detach().cpu().numpy().tolist()
+                    if hasattr(logits, "detach")
+                    else getattr(logits, "tolist", lambda: list(logits))()
+                )
+                # print(f"{action}: {label} (logits={logits_list})")
+                actions.append(
+                    {
+                        "step": step_idx,
+                        "action_index": action,
+                        "action_label": label,
+                        "logits": logits_list,
+                    }
+                )
+
+            population_traces.append(
+                {
+                    "iteration": idx,
+                    "return": float(returns[idx]),
+                    "actions": actions,
+                }
+            )
 
         # find the global best policy parameters
         if gen_best > global_best:
@@ -150,6 +173,7 @@ def train_cma_es(
             # reward_std=0,
             sigma=es.sigma,
             policy_info=gen_best_info,
+            population_traces=population_traces,
         )
         history.append(stats)
 

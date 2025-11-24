@@ -16,13 +16,30 @@ class GenerationStats:
     # reward_std: float
     sigma: float
     policy_info: Dict[str, Any]
+    population_traces: list[Dict[str, Any]] | None = None
 
     def to_dict(self) -> Dict[str, Any]:
-        def _format_action(x):
-            action = int(x['selected_action'])
-            logits = x['logits']
+        def _serialize_logits(logits: Any) -> list[float]:
+            # tensors/arrays → list for JSON
+            if hasattr(logits, "detach"):
+                logits = logits.detach()
+            if hasattr(logits, "cpu"):
+                logits = logits.cpu()
+            if hasattr(logits, "numpy"):
+                logits = logits.numpy()
+            return [float(x) for x in logits]
+
+        def _serialize_action(idx: int, x: Dict[str, Any]) -> Dict[str, Any]:
+            action = int(x["selected_action"])
             label = EndlessPlatformerEnv.ACTION_LABELS[action]
-            return f"{action}: {label} (logits={logits.numpy()})"
+            return {
+                "step": idx,
+                "action_index": action,
+                "action_label": label,
+                "logits": _serialize_logits(x["logits"]),
+            }
+
+        serialized_best_trace = [_serialize_action(i, x) for i, x in enumerate(self.policy_info)]
 
         return {
             "generation": int(self.generation),
@@ -32,5 +49,12 @@ class GenerationStats:
             # "median_reward": float(self.median_reward),
             # "reward_std": float(self.reward_std),
             "sigma": float(self.sigma),
-            "selected_actions": [_format_action(x) for x in self.policy_info],
+            "best_policy": {
+                "selected_actions": [
+                    f"{a['action_index']}: {a['action_label']} (logits={a['logits']})"
+                    for a in serialized_best_trace
+                ],
+                "trace": serialized_best_trace,
+            },
+            "population": self.population_traces or [],
         }
