@@ -56,6 +56,7 @@ if __name__ == "__main__":
         history_path,
         {
             "history": [s.to_dict() for s in history],
+            "best_gen": bundle.metadata.get("best_gen"),
         },
     )
     print(f"Wrote history to {history_path}")

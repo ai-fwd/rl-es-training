@@ -50,10 +50,6 @@ class GenerationStats:
             # "reward_std": float(self.reward_std),
             "sigma": float(self.sigma),
             "best_policy": {
-                "selected_actions": [
-                    f"{a['action_index']}: {a['action_label']} (logits={a['logits']})"
-                    for a in serialized_best_trace
-                ],
                 "trace": serialized_best_trace,
             },
             "population": self.population_traces or [],

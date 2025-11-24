@@ -127,7 +127,7 @@ def train_cma_es(
         gen_best_info = policy_infos[int(ret_array.argmax())]
 
         for idx, info in enumerate(policy_infos):
-            #print(f"Policy info for: Gen {gen} Itr:{idx} - Return: {returns[idx]}")
+            # print(f"Policy info for: Gen {gen} Itr:{idx} - Return: {returns[idx]}")
             actions = []
             for step_idx, x in enumerate(info):
                 action = int(x["selected_action"])
@@ -196,6 +196,7 @@ def train_cma_es(
     return PolicyBundle(
         policy=best_policy,
         metadata={
+            "best_gen": global_best_gen,
             "best_return": global_best,
             "dim": num_params,
             "popsize": lam,
