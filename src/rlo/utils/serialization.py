@@ -43,7 +43,7 @@ class PolicyBundle:
         return path
 
     @classmethod
-    def load(cls, path: str | Path) -> "PolicyBundle":
+    def load(cls, path: str | Path, policy_overrides: Dict[str, object] = None) -> "PolicyBundle":
         """Load a previously saved policy bundle."""
         data = np.load(Path(path), allow_pickle=True)
         n_actions = data["n_actions"].item()
@@ -59,6 +59,9 @@ class PolicyBundle:
         policy_kwargs = {}
         if "policy_kwargs" in data.files:
             policy_kwargs = json.loads(data["policy_kwargs"].item())
+
+        if policy_overrides:
+            policy_kwargs.update(policy_overrides)
 
         if policy_class_name is None:
             raise ValueError("Saved policy bundle missing 'policy_class' field")

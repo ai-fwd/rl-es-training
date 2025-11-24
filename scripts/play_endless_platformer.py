@@ -77,6 +77,11 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Multiplier for the simulation speed (1.0 = real-time).",
     )
+    parser.add_argument(
+        "--policy-args",
+        nargs="*",
+        help="Optional key=value overrides for policy parameters (e.g. temperature=0.5).",
+    )
     return parser.parse_args()
 
 
@@ -400,7 +405,30 @@ def main() -> None:
 
     bundle: Optional[PolicyBundle] = None
     if args.policy is not None:
-        bundle = PolicyBundle.load(args.policy)
+        overrides = {}
+        if args.policy_args:
+            for item in args.policy_args:
+                if "=" not in item:
+                    print(f"Warning: ignoring malformed policy arg '{item}' (expected key=value)")
+                    continue
+                key, val_str = item.split("=", 1)
+                # Simple type inference
+                if val_str.lower() == "true":
+                    val = True
+                elif val_str.lower() == "false":
+                    val = False
+                else:
+                    try:
+                        val = int(val_str)
+                    except ValueError:
+                        try:
+                            val = float(val_str)
+                        except ValueError:
+                            val = val_str
+                overrides[key] = val
+            print(f"Policy overrides: {overrides}")
+
+        bundle = PolicyBundle.load(args.policy, policy_overrides=overrides)
         print(f"Loaded policy bundle from {args.policy}")
         if not args.scratchpad:
             print("Tip: re-run with --scratchpad to see the policy diagnostics panel.")
