@@ -12,9 +12,6 @@ from . import Policy
 
 @dataclass
 class ParamLinearPolicy(Policy):
-    n_actions: int
-    n_features: int
-
     def __post_init__(self):
         # Initialize weights and biases
         self._W = np.zeros((self.n_actions, self.n_features), dtype=np.float32)

@@ -1,12 +1,14 @@
 from __future__ import annotations
+import torch
 
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple, cast
 
 import numpy as np
 
 # Import your environment (adjust import path if needed)
 from rlo.envs import EndlessPlatformerEnv
 from rlo.policies import Policy
+from rlo.policies.param_nonlinear_jepa import ParamNonLinearPolicy_JEPA
 
 
 def evaluate_candidate(
@@ -35,18 +37,56 @@ def evaluate_candidate(
     prev_action = -1
     total_reward = 0.0
 
+    # Initialize JEPA optimizer if policy has one
+    jepa_optimizer = None
+    if isinstance(policy, ParamNonLinearPolicy_JEPA):
+        policy = cast(ParamNonLinearPolicy_JEPA, policy)
+        # Simple SGD or Adam for online learning
+        jepa_optimizer = torch.optim.Adam(policy.jepa.parameters(), lr=1e-3)
+
     policy_info = []
 
     for _ in range(horizon):
         features = make_features(obs, info, prev_action)
         action, act_info = policy.act(features, info)
 
-        obs, reward, terminated, truncated, info = env.step(action)
+        next_obs, reward, terminated, truncated, next_info = env.step(action)
         total_reward += float(reward)
+
+        # JEPA Online Training Step
+        if jepa_optimizer is not None:
+            policy = cast(ParamNonLinearPolicy_JEPA, policy)
+            
+            # Prepare tensors
+            obs_t = torch.from_numpy(features).float().unsqueeze(0)
+            
+            # We need next features for the target
+            next_features = make_features(next_obs, next_info, action)
+            next_obs_t = torch.from_numpy(next_features).float().unsqueeze(0)
+            
+            action_vec = torch.zeros(1, policy.n_actions)
+            action_vec[0, action] = 1.0
+            
+            # get energy from next_info to drive curiosity
+            energy = next_info.get("energy", 0.0)
+            metadata_t = torch.tensor([[energy]]).float()
+
+            loss_dict = policy.jepa.compute_losses(obs_t, action_vec, next_obs_t, metadata_t)
+            
+            jepa_optimizer.zero_grad()
+            loss_dict["loss"].backward()
+            jepa_optimizer.step()
+            
+            policy.jepa.update_target_encoder()
+            
+            # Add JEPA stats to info for logging
+            act_info.update(loss_dict)
 
         policy_info.append(act_info)
 
         prev_action = action
+        obs = next_obs
+        info = next_info
 
         if terminated or truncated:
             break

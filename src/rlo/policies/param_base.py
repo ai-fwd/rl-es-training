@@ -7,16 +7,19 @@ Feature extractions occurs outside of the policy.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
 import numpy as np
 
-
+@dataclass
 class Policy(ABC):
     """Abstract policy:
     - Parameters are represented as a single vector that represent the agent. This is for consistency across parameter-space optimizers. (shape [d])
     - act() method takes in observations and produces actions.
     """
+    n_actions: int
+    n_features: int
 
     @abstractmethod
     def num_params(self) -> int:

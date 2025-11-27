@@ -37,11 +37,11 @@ def make_basic_features(
 
     # bucket energy level to bad, okay, good
     if energy < 0.3:
-        energy = -1.0
+        energy_cat = -1.0
     elif energy < 0.7:
-        energy = 0.0
+        energy_cat = 0.0
     else:
-        energy = 1.0
+        energy_cat = 1.0
 
     # One-hot encode previous action (4 actions) for temporal context
     prev_action_one_hot = np.zeros(4, dtype=np.float32)
@@ -50,9 +50,9 @@ def make_basic_features(
 
     # one-hot encode previous energy level (3 levels)
     prev_energy_one_hot = np.zeros(3, dtype=np.float32)
-    if energy == -1:
+    if energy_cat == -1:
         prev_energy_one_hot[0] = 1.0
-    elif energy == 0:
+    elif energy_cat == 0:
         prev_energy_one_hot[1] = 1.0
     else:
         prev_energy_one_hot[2] = 1.0

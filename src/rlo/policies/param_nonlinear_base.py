@@ -30,9 +30,6 @@ class MLP(nn.Module):
 
 @dataclass
 class ParamNonLinearPolicy(Policy):
-    n_actions: int
-    n_features: int
-
     def __post_init__(self):
         # Instead of defining the weights and biases directly, we define an MLP to represent the policy
         self._model = MLP(input_dim=self.n_features, hidden_dim=self.n_features, output_dim=self.n_actions)

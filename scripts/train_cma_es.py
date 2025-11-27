@@ -6,15 +6,33 @@ from pathlib import Path
 from typing import Dict
 
 from rlo.features import make_basic_features
-from rlo.policies import ParamLinearPolicy, ParamNonLinearPolicy, ParamNonLinearPolicy_ArgMax, ParamNonLinearPolicy_Stochastic
+from rlo.policies import ParamLinearPolicy, ParamNonLinearPolicy_ArgMax, ParamNonLinearPolicy_Stochastic
+from rlo.policies.param_base import Policy
+from rlo.policies.param_nonlinear_jepa import ParamNonLinearPolicy_JEPA
 from rlo.trainers import train_cma_es
+from enum import Enum, auto
+from typing import Callable
 
 
-def make_linear_policy() -> ParamLinearPolicy:
-    return ParamLinearPolicy(n_actions=4, n_features=11)
+class PolicyType(Enum):
+    LINEAR = auto()
+    NONLINEAR_ARGMAX = auto()
+    NONLINEAR_STOCHASTIC = auto()
+    NONLINEAR_JEPA = auto()
 
-def make_nonlinear_policy() -> ParamNonLinearPolicy:
-    return ParamNonLinearPolicy_Stochastic(n_actions=4, n_features=4)
+def make_policy_factory(policy_type: PolicyType, n_features: int, n_actions: int) -> Callable[[], Policy]:
+    """Return a zero-arg callable that constructs the requested policy."""
+    match policy_type:
+        case PolicyType.LINEAR:
+            return lambda: ParamLinearPolicy(n_actions=n_actions, n_features=n_features)
+        case PolicyType.NONLINEAR_ARGMAX:
+            return lambda: ParamNonLinearPolicy_ArgMax(n_actions=n_actions, n_features=n_features)
+        case PolicyType.NONLINEAR_STOCHASTIC:
+            return lambda: ParamNonLinearPolicy_Stochastic(n_actions=n_actions, n_features=n_features)
+        case PolicyType.NONLINEAR_JEPA:
+            return lambda: ParamNonLinearPolicy_JEPA(n_actions=n_actions, n_features=n_features)
+        case _:
+            raise ValueError(f"Unknown policy type: {policy_type}")
 
 def write_json(path: Path, payload: Dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,8 +54,11 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
+    
+    policy = PolicyType.NONLINEAR_JEPA
+    
     bundle, history = train_cma_es(
-        make_policy=make_nonlinear_policy,
+        make_policy=make_policy_factory(policy, n_features=4, n_actions=4),
         make_features=make_basic_features,
         generations=20,
         init_sigma=1,
@@ -49,7 +70,7 @@ if __name__ == "__main__":
     print("\n=== Training complete ===")
 
     # Save the training results
-    save_dir = Path("runs/nonlinear")
+    save_dir = Path(f"runs/{policy.name.lower()}")
     save_dir.mkdir(parents=True, exist_ok=True)
     history_path = save_dir / "history.json"
     write_json(
