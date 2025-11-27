@@ -19,25 +19,37 @@ class GenerationStats:
     population_traces: list[Dict[str, Any]] | None = None
 
     def to_dict(self) -> Dict[str, Any]:
-        def _serialize_logits(logits: Any) -> list[float]:
-            # tensors/arrays → list for JSON
-            if hasattr(logits, "detach"):
-                logits = logits.detach()
-            if hasattr(logits, "cpu"):
-                logits = logits.cpu()
-            if hasattr(logits, "numpy"):
-                logits = logits.numpy()
-            return [float(x) for x in logits]
+        def _serialize_float_list(values: Any) -> list[float]:
+            """Convert tensors/arrays/sequences to a list of floats for JSON."""
+            if hasattr(values, "detach"):
+                values = values.detach()
+            if hasattr(values, "cpu"):
+                values = values.cpu()
+            if hasattr(values, "numpy"):
+                values = values.numpy()
+            if hasattr(values, "tolist"):
+                values = values.tolist()
+            if isinstance(values, (list, tuple)):
+                return [float(x) for x in values]
+            return [float(values)]
 
         def _serialize_action(idx: int, x: Dict[str, Any]) -> Dict[str, Any]:
             action = int(x["selected_action"])
             label = EndlessPlatformerEnv.ACTION_LABELS[action]
-            return {
+            serialized = {
                 "step": idx,
                 "action_index": action,
                 "action_label": label,
-                "logits": _serialize_logits(x["logits"]),
+                "logits": _serialize_float_list(x["logits"]),
             }
+            if "curiosity_scores" in x:
+                serialized["curiosity_scores"] = _serialize_float_list(x["curiosity_scores"])
+            if "validity" in x:
+                try:
+                    serialized["validity"] = float(x["validity"])
+                except Exception:
+                    serialized["validity"] = _serialize_float_list(x["validity"])[0]
+            return serialized
 
         serialized_best_trace = [_serialize_action(i, x) for i, x in enumerate(self.policy_info)]
 

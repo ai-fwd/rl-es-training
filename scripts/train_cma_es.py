@@ -60,7 +60,7 @@ if __name__ == "__main__":
     bundle, history = train_cma_es(
         make_policy=make_policy_factory(policy, n_features=4, n_actions=4),
         make_features=make_basic_features,
-        generations=20,
+        generations=10,
         init_sigma=1,
         pop_multiplier=1.0,
         base_seed=args.seed if args.seed is not None else 0,

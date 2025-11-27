@@ -126,6 +126,20 @@ def train_cma_es(
         gen_best = float(ret_array.max())
         gen_best_info = policy_infos[int(ret_array.argmax())]
 
+        def _to_float_list(values: Any) -> list[float]:
+            """Convert tensors/arrays/sequences to plain Python floats."""
+            if hasattr(values, "detach"):
+                values = values.detach()
+            if hasattr(values, "cpu"):
+                values = values.cpu()
+            if hasattr(values, "numpy"):
+                values = values.numpy()
+            if hasattr(values, "tolist"):
+                values = values.tolist()
+            if isinstance(values, (list, tuple)):
+                return [float(v) for v in values]
+            return [float(values)]
+
         for idx, info in enumerate(policy_infos):
             # print(f"Policy info for: Gen {gen} Itr:{idx} - Return: {returns[idx]}")
             actions = []
@@ -133,20 +147,22 @@ def train_cma_es(
                 action = int(x["selected_action"])
                 logits = x["logits"]
                 label = EndlessPlatformerEnv.ACTION_LABELS[action]
-                logits_list = (
-                    logits.detach().cpu().numpy().tolist()
-                    if hasattr(logits, "detach")
-                    else getattr(logits, "tolist", lambda: list(logits))()
-                )
+                logits_list = _to_float_list(logits)
+                action_entry = {
+                    "step": step_idx,
+                    "action_index": action,
+                    "action_label": label,
+                    "logits": logits_list,
+                }
+                if "curiosity_scores" in x:
+                    action_entry["curiosity_scores"] = _to_float_list(x["curiosity_scores"])
+                if "validity" in x:
+                    try:
+                        action_entry["validity"] = float(x["validity"])
+                    except Exception:
+                        action_entry["validity"] = _to_float_list(x["validity"])[0]
                 # print(f"{action}: {label} (logits={logits_list})")
-                actions.append(
-                    {
-                        "step": step_idx,
-                        "action_index": action,
-                        "action_label": label,
-                        "logits": logits_list,
-                    }
-                )
+                actions.append(action_entry)
 
             population_traces.append(
                 {
