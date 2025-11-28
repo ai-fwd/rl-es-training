@@ -42,22 +42,34 @@ def test_policy_integration():
     n_features = 8
     n_actions = 4
     
-    policy = ParamNonLinearPolicy_JEPA(n_actions=n_actions, n_features=n_features)
+    policy = ParamNonLinearPolicy_JEPA(n_actions=n_actions, n_features=n_features, temperature=1.0)
+    
+    # Inject a JEPA (simulating Global JEPA)
+    jepa = JEPAModule(n_features, 64, 32, n_actions)
+    policy.jepa = jepa
     
     # Test act
     features = np.random.randn(n_features).astype(np.float32)
     info = {}
     
-    action, act_info = policy.act(features, info)
+    # Run multiple times to check for stochasticity (not guaranteed but likely different)
+    actions = []
+    for _ in range(10):
+        action, act_info = policy.act(features, info)
+        actions.append(action)
+        assert isinstance(action, int)
+        assert 0 <= action < n_actions
+        assert "curiosity_scores" in act_info
+        assert "probabilities" in act_info
     
-    assert isinstance(action, int)
-    assert 0 <= action < n_actions
-    assert "curiosity_scores" in act_info
-    assert len(act_info["curiosity_scores"]) == n_actions
+    # Check if we got at least some variation (might fail if logits are extreme, but unlikely with random init)
+    # With random init, logits should be close to 0, so uniform probs.
+    assert len(set(actions)) > 1, "Policy should be stochastic with temp=1.0"
     
     # Test serialization
     payload = policy.to_payload()
     assert "jepa_state" in payload
+    assert "temperature" in payload
     
     # Test deserialization
     params = policy.get_params()
@@ -68,8 +80,34 @@ def test_policy_integration():
     # Check if weights match
     for p1, p2 in zip(policy.jepa.parameters(), new_policy.jepa.parameters()):
         assert torch.allclose(p1, p2)
+        
+def test_global_jepa_training_loop():
+    # Mock training loop components
+    n_features = 8
+    n_actions = 4
+    jepa = JEPAModule(n_features, 64, 32, n_actions)
+    optimizer = torch.optim.Adam(jepa.parameters(), lr=1e-3)
+    
+    # Create dummy transitions
+    batch_size = 10
+    obs = torch.randn(batch_size, n_features)
+    next_obs = torch.randn(batch_size, n_features)
+    actions = torch.randint(0, n_actions, (batch_size,))
+    action_vec = torch.zeros(batch_size, n_actions)
+    action_vec[range(batch_size), actions] = 1.0
+    metadata = torch.randn(batch_size, 1)
+    
+    # Train step
+    loss_dict = jepa.compute_losses(obs, action_vec, next_obs, metadata)
+    optimizer.zero_grad()
+    loss_dict["loss"].backward()
+    optimizer.step()
+    jepa.update_target_encoder()
+    
+    assert loss_dict["loss"].item() > 0
 
 if __name__ == "__main__":
     test_jepa_module_shapes()
     test_policy_integration()
+    test_global_jepa_training_loop()
     print("All tests passed!")

@@ -21,28 +21,25 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
     # JEPA config
     jepa_hidden_dim: int = 64
     jepa_latent_dim: int = 32
-    device: str = "cpu"
+    temperature: float = 1.0
     
     def __post_init__(self):
-        # Initialize JEPA
+        # Initialize Policy MLP
+        # Input to MLP is features + n_actions (one score per action)
+        self._model = MLP(
+            input_dim=self.n_features + self.n_actions,
+            hidden_dim=self.n_features, # Keep hidden dim same as features for now
+            output_dim=self.n_actions
+        )
+        
+        # JEPA is global so injected externally or loaded from payload
+        # This is just a default instance.
         self.jepa = JEPAModule(
             input_dim=self.n_features,
             hidden_dim=self.jepa_hidden_dim,
             latent_dim=self.jepa_latent_dim,
             action_dim=self.n_actions,
         )
-        
-        # Initialize Policy MLP
-        # Input to MLP is features + curiosity scores per action == n_features + n_actions
-        self._model = MLP(
-            input_dim=self.n_features + self.n_actions,
-            hidden_dim=self.n_features, # Keep hidden dim same as features for now
-            output_dim=self.n_actions
-        )
-
-        self.device = torch.device(self.device)
-        self.jepa.to(self.device)
-        self._model.to(self.device)
 
     def to_payload(self) -> dict:
         """Serialize JEPA weights along with policy config."""
@@ -55,7 +52,7 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
             "jepa_hidden_dim": self.jepa_hidden_dim,
             "jepa_latent_dim": self.jepa_latent_dim,
             "jepa_state": jepa_str,
-            "device": str(self.device)
+            "temperature": self.temperature,
         }
 
     @classmethod
@@ -82,14 +79,14 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
         self, features: np.ndarray, info: Dict[str, Any]
     ) -> Tuple[int, Dict[str, np.ndarray]]:
         # 1. Prepare inputs
-        obs_tensor = torch.from_numpy(features).float().unsqueeze(0).to(self.device) # (1, F)
+        obs_tensor = torch.from_numpy(features).float().unsqueeze(0) # (1, F)
         
         # 2. Compute Curiosity Scores
+        # Use the injected/loaded JEPA
         with torch.no_grad():
             # Current State Embeddings
             z_t = self.jepa.encode(obs_tensor) # (1, L)
             
-            # Baseline for Probe: P(Target(s))
             # "project z_t so the probe consistently uses target embeddings"
             # We use the target encoder on the current state to get the baseline z'
             z_prime_t = self.jepa.encode_target(obs_tensor) # (1, L)
@@ -98,7 +95,7 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
             scores = []
             for a in range(self.n_actions):
                 # One-hot action
-                action_vec = torch.zeros(1, self.n_actions).to(self.device)
+                action_vec = torch.zeros(1, self.n_actions)
                 action_vec[0, a] = 1.0
                 
                 # Imagine future
@@ -107,7 +104,6 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
                 # Get a validity percentage for this imagined future
                 validity = self.jepa.get_validity(z_t, z_hat_next) # (1,)
                 
-                # Survival Impact: P(z_hat_next) - P(z_prime_t)
                 # Both inputs to probe are in Target Space (Predicted vs Actual)
                 v_next = self.jepa.probe(z_hat_next) # (1, 1)
                 delta_f = v_next - v_now
@@ -121,16 +117,20 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
         # 3. Policy Forward
         # Concatenate features and scores
         input_features = np.concatenate([features, scores_arr])
-        x = torch.from_numpy(input_features).float().to(self.device)
+        x = torch.from_numpy(input_features).float()
         
         logits = self._model(x)
         
-        # Deterministic argmax for now
-        selected_action = int(np.argmax(logits.detach().cpu().numpy()))
+        # Stochastic Sampling
+        T = getattr(self, "temperature", 1.0)
+        probabilities = F.softmax(logits / float(T), dim=-1)
+        dist = torch.distributions.Categorical(probs=probabilities)
+        selected_action = int(dist.sample())
         
         info = {
             "selected_action": selected_action,
             "logits": logits,
+            "probabilities": probabilities.detach().numpy(),
             "curiosity_scores": scores_arr,
             "validity": validity.item(),
         }

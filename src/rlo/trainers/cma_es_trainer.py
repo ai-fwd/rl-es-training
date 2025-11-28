@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple, cast
 
 import cma
 import numpy as np
@@ -14,6 +14,11 @@ from rlo.policies.param_base import Policy
 from rlo.utils.logging import GenerationStats
 from rlo.utils.serialization import PolicyBundle
 
+from rlo.policies.jepa import JEPAModule
+from rlo.policies.param_nonlinear_jepa import ParamNonLinearPolicy_JEPA
+import torch
+import random
+from collections import deque
 
 def train_cma_es(
     make_policy: Callable[[], Policy],
@@ -49,6 +54,22 @@ def train_cma_es(
     policy = make_policy()
     num_params = policy.num_params()
 
+    # Global JEPA Setup
+    global_jepa = None
+    jepa_optimizer = None
+    replay_buffer = deque(maxlen=100000)
+    
+    if isinstance(policy, ParamNonLinearPolicy_JEPA):
+        policy = cast(ParamNonLinearPolicy_JEPA, policy)
+        # Use the config from the policy instance
+        global_jepa = JEPAModule(
+            input_dim=policy.n_features,
+            hidden_dim=policy.jepa_hidden_dim,
+            latent_dim=policy.jepa_latent_dim,
+            action_dim=policy.n_actions,
+        )
+        jepa_optimizer = torch.optim.Adam(global_jepa.parameters(), lr=1e-3)
+
     # Standard population size: λ = 4 + ⌊3 ln d⌋
     lam = max(4 + int(3 * math.log(num_params)), 6)
     lam = int(max(4, round(pop_multiplier * lam)))
@@ -79,6 +100,9 @@ def train_cma_es(
         returns = []
         policy_infos = []
         population_traces = []
+        
+        # Collect all transitions for this generation
+        gen_transitions = []
 
         for i, x in enumerate(X):
             # region Seed Generation Rationale
@@ -106,71 +130,104 @@ def train_cma_es(
             seed = base_seed + gen * 997 + i
 
             # change seed per evaluation for diversity
-            ret, policy_info = evaluate_candidate(
+            ret, policy_info, transitions = evaluate_candidate(
                 params=x,
                 make_policy=make_policy,
                 make_features=make_features,
                 horizon=horizon,
                 seed=seed,
+                jepa=global_jepa # Pass global JEPA
             )
             returns.append(ret)
             losses.append(-ret)  # CMA-ES minimizes
             policy_infos.append(policy_info)
+            gen_transitions.extend(transitions)
 
         es.tell(X, losses)
         elapsed = time.perf_counter() - ask_time  # time taken for evaluations
         ##es.disp()
+
+        # Add to Replay Buffer
+        replay_buffer.extend(gen_transitions)
+        
+        # Train Global JEPA
+        if global_jepa is not None and len(replay_buffer) > 1000:
+            # Mini-batch training
+            batch_size = 256
+            n_updates = 50 # Number of updates per generation
+            
+            jepa_losses = []
+            
+            for _ in range(n_updates):
+                batch = random.sample(replay_buffer, batch_size)
+                
+                # Prepare batch tensors
+                obs_batch = torch.tensor(np.stack([t["obs"] for t in batch])).float()
+                next_obs_batch = torch.tensor(np.stack([t["next_obs"] for t in batch])).float()
+                metadata_batch = torch.tensor(np.stack([t["metadata"] for t in batch])).float()
+                
+                # Action one-hot
+                action_batch = torch.zeros(batch_size, policy.n_actions)
+                actions = [t["action"] for t in batch]
+                action_batch[range(batch_size), actions] = 1.0
+                
+                loss_dict = global_jepa.compute_losses(obs_batch, action_batch, next_obs_batch, metadata_batch)
+                
+                jepa_optimizer.zero_grad()
+                loss_dict["loss"].backward()
+                jepa_optimizer.step()
+                global_jepa.update_target_encoder()
+                
+                jepa_losses.append(loss_dict["loss"].item())
+            
+            avg_jepa_loss = sum(jepa_losses) / len(jepa_losses)
+            print(f"[Gen {gen:03d}] JEPA Loss: {avg_jepa_loss:.4f}")
 
         # vectorize all the candidate returns
         ret_array = np.array(returns, dtype=np.float32)
         gen_best = float(ret_array.max())
         gen_best_info = policy_infos[int(ret_array.argmax())]
 
-        def _to_float_list(values: Any) -> list[float]:
-            """Convert tensors/arrays/sequences to plain Python floats."""
-            if hasattr(values, "detach"):
-                values = values.detach()
-            if hasattr(values, "cpu"):
-                values = values.cpu()
-            if hasattr(values, "numpy"):
-                values = values.numpy()
-            if hasattr(values, "tolist"):
-                values = values.tolist()
-            if isinstance(values, (list, tuple)):
-                return [float(v) for v in values]
-            return [float(values)]
-
+        # Re-implementing trace logging briefly to match original file structure
         for idx, info in enumerate(policy_infos):
-            # print(f"Policy info for: Gen {gen} Itr:{idx} - Return: {returns[idx]}")
-            actions = []
-            for step_idx, x in enumerate(info):
-                action = int(x["selected_action"])
-                logits = x["logits"]
-                label = EndlessPlatformerEnv.ACTION_LABELS[action]
-                logits_list = _to_float_list(logits)
-                action_entry = {
-                    "step": step_idx,
-                    "action_index": action,
-                    "action_label": label,
-                    "logits": logits_list,
-                }
-                if "curiosity_scores" in x:
-                    action_entry["curiosity_scores"] = _to_float_list(x["curiosity_scores"])
-                if "validity" in x:
+             actions = []
+             # Limit trace size
+             for step_idx, x in enumerate(info[:100]): 
+                 action = int(x["selected_action"])
+                 logits = x["logits"]
+                 label = EndlessPlatformerEnv.ACTION_LABELS[action]
+                 logits_list = (
+                    logits.detach().cpu().numpy().tolist()
+                    if hasattr(logits, "detach")
+                    else getattr(logits, "tolist", lambda: list(logits))()
+                 )
+                 action_entry = {
+                     "step": step_idx,
+                     "action_index": action,
+                     "action_label": label,
+                     "logits": logits_list
+                 }
+                 if "curiosity_scores" in x:
+                    action_entry["curiosity_scores"] = (
+                        x["curiosity_scores"].detach().cpu().numpy().tolist()
+                        if hasattr(x["curiosity_scores"], "detach")
+                        else getattr(x["curiosity_scores"], "tolist", lambda: list(x["curiosity_scores"]))()
+                    )
+                 if "validity" in x:
                     try:
                         action_entry["validity"] = float(x["validity"])
                     except Exception:
-                        action_entry["validity"] = _to_float_list(x["validity"])[0]
-                # print(f"{action}: {label} (logits={logits_list})")
-                actions.append(action_entry)
-
-            population_traces.append(
-                {
-                    "iteration": idx,
-                    "return": float(returns[idx]),
-                    "actions": actions,
-                }
-            )
+                        action_entry["validity"] = (
+                            x["validity"].detach().cpu().numpy().tolist()[0]
+                            if hasattr(x["validity"], "detach")
+                            else getattr(x["validity"], "tolist", lambda: list(x["validity"]))()[0]
+                        )
+                 actions.append(action_entry)
+             population_traces.append({
+                 "iteration": idx,
+                 "return": float(returns[idx]),
+                 "actions": actions
+             })
 
         # find the global best policy parameters
         if gen_best > global_best:
@@ -207,6 +264,10 @@ def train_cma_es(
     best_policy = make_policy()
     if best_params is not None:
         best_policy.set_params(best_params)
+        
+    # Inject the trained Global JEPA into the best policy
+    if global_jepa is not None and isinstance(best_policy, ParamNonLinearPolicy_JEPA):
+        best_policy.jepa = global_jepa
 
     # create a policy bundle to return
     return PolicyBundle(

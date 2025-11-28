@@ -8,7 +8,7 @@ import numpy as np
 # Import your environment (adjust import path if needed)
 from rlo.envs import EndlessPlatformerEnv
 from rlo.policies import Policy
-from rlo.policies.param_nonlinear_jepa import ParamNonLinearPolicy_JEPA
+from rlo.policies.jepa import JEPAModule
 
 
 def evaluate_candidate(
@@ -17,7 +17,8 @@ def evaluate_candidate(
     make_features: Callable[[Dict[str, Any], Dict[str, Any], int], np.ndarray],
     horizon: int = 1800,
     seed: int = 0,
-) -> Tuple[float, list[Dict[str, np.ndarray]]]:
+    jepa: JEPAModule | None = None,
+) -> Tuple[float, list[Dict[str, np.ndarray]], list[Dict[str, object]]]:
     """Run one episode with the given policy parameters and return total reward."""
 
     # Create policy and set its parameters
@@ -36,15 +37,13 @@ def evaluate_candidate(
     obs, info = env.reset(seed=seed)
     prev_action = -1
     total_reward = 0.0
-
-    # Initialize JEPA optimizer if policy has one
-    jepa_optimizer = None
-    if isinstance(policy, ParamNonLinearPolicy_JEPA):
-        policy = cast(ParamNonLinearPolicy_JEPA, policy)
-        # Simple SGD or Adam for online learning
-        jepa_optimizer = torch.optim.Adam(policy.jepa.parameters(), lr=1e-3)
+    
+    # Inject Global JEPA if provided
+    if hasattr(policy, "jepa") and jepa is not None:
+        policy.jepa = jepa
 
     policy_info = []
+    transitions = []
 
     for _ in range(horizon):
         features = make_features(obs, info, prev_action)
@@ -52,36 +51,20 @@ def evaluate_candidate(
 
         next_obs, reward, terminated, truncated, next_info = env.step(action)
         total_reward += float(reward)
-
-        # JEPA Online Training Step
-        if jepa_optimizer is not None:
-            policy = cast(ParamNonLinearPolicy_JEPA, policy)
-            
-            # Prepare tensors
-            device = policy.device
-            obs_t = torch.from_numpy(features).float().unsqueeze(0).to(device)
-            
-            # We need next features for the target
-            next_features = make_features(next_obs, next_info, action)
-            next_obs_t = torch.from_numpy(next_features).float().unsqueeze(0).to(device)
-            
-            action_vec = torch.zeros(1, policy.n_actions).to(device)
-            action_vec[0, action] = 1.0
-            
-            # get energy from next_info to drive curiosity
-            energy = next_info.get("energy", 0.0)
-            metadata_t = torch.tensor([[energy]]).float().to(device)
-
-            loss_dict = policy.jepa.compute_losses(obs_t, action_vec, next_obs_t, metadata_t)
-            
-            jepa_optimizer.zero_grad()
-            loss_dict["loss"].backward()
-            jepa_optimizer.step()
-            
-            policy.jepa.update_target_encoder()
-            
-            # Add JEPA stats to info for logging
-            act_info.update(loss_dict)
+        
+        # Collect transition for Global JEPA training
+        # We need next_features for the target encoder
+        next_features = make_features(next_obs, next_info, action)
+        
+        # Metadata (Energy)
+        energy = next_info.get("energy", 0.0)
+        
+        transitions.append({
+            "obs": features,
+            "action": action,
+            "next_obs": next_features,
+            "metadata": np.array([energy], dtype=np.float32)
+        })
 
         policy_info.append(act_info)
 
@@ -94,4 +77,4 @@ def evaluate_candidate(
 
     env.close()
 
-    return total_reward, policy_info
+    return total_reward, policy_info, transitions

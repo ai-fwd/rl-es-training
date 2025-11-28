@@ -30,7 +30,7 @@ def make_policy_factory(policy_type: PolicyType, n_features: int, n_actions: int
         case PolicyType.NONLINEAR_STOCHASTIC:
             return lambda: ParamNonLinearPolicy_Stochastic(n_actions=n_actions, n_features=n_features)
         case PolicyType.NONLINEAR_JEPA:
-            return lambda: ParamNonLinearPolicy_JEPA(n_actions=n_actions, n_features=n_features, device=device)
+            return lambda: ParamNonLinearPolicy_JEPA(n_actions=n_actions, n_features=n_features)
         case _:
             raise ValueError(f"Unknown policy type: {policy_type}")
 
