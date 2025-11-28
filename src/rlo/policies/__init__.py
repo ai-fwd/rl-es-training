@@ -33,12 +33,15 @@ from .param_nonlinear import (
     ParamNonLinearPolicy_Stochastic,
 )
 
+from .param_nonlinear_jepa import ParamNonLinearPolicy_JEPA
+
 __all__ = [
     "Policy",
     "ParamLinearPolicy",
     "ParamNonLinearPolicy",
     "ParamNonLinearPolicy_ArgMax",
     "ParamNonLinearPolicy_Stochastic",
+    "ParamNonLinearPolicy_JEPA",
     "register_policy",
     "get_policy_class",
     "POLICY_REGISTRY",

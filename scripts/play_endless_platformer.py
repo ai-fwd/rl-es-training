@@ -138,6 +138,7 @@ class ScratchpadPanel:
         self._action_var = tk.StringVar(value="Action: —")
         self._energy_var = tk.StringVar(value="Energy: —")
         self._state_var = tk.StringVar(value="Flags: —")
+        self._validity_var = tk.StringVar(value="")
         self._prob_var = tk.StringVar(value="")
 
         for var in (
@@ -145,6 +146,7 @@ class ScratchpadPanel:
             self._action_var,
             self._energy_var,
             self._state_var,
+            self._validity_var,
         ):
             tk.Label(self._frame, textvariable=var, fg="#d7d7d7", bg="#1e1e1e").pack(
                 anchor="w"
@@ -191,6 +193,7 @@ class ScratchpadPanel:
         self._action_var.set("Action: —")
         self._energy_var.set("Energy: —")
         self._state_var.set("Flags: —")
+        self._validity_var.set("")
         self._prob_var.set("")
         self._features_label.config(text="")
 
@@ -211,22 +214,57 @@ class ScratchpadPanel:
         flags = f"can_eat={bool(info_before.get('can_eat', False))} near_food={bool(info_before.get('near_food', False))} on_ground={bool(info_after.get('on_ground', False))}"
         self._state_var.set(f"Flags: {flags}")
 
-        probs = diagnostics["probabilities"]
+        if "validity" in diagnostics:
+             self._validity_var.set(f"Validity: {diagnostics['validity']:.3f}")
+        else:
+             self._validity_var.set("")
+
+        if "probabilities" in diagnostics:
+            probs = diagnostics["probabilities"]
+        elif "logits" in diagnostics:
+            # Softmax
+            logits = diagnostics["logits"]
+            if hasattr(logits, "detach"):
+                logits = logits.detach().cpu().numpy()
+            if isinstance(logits, list):
+                logits = np.array(logits)
+            
+            # Handle batch dim if present
+            if logits.ndim > 1:
+                logits = logits.flatten()
+                
+            e_x = np.exp(logits - np.max(logits))
+            probs = e_x / e_x.sum()
+        else:
+            probs = [0.0] * len(self._action_labels)
+
         prob_lines = []
         for idx, env_action in enumerate(self._action_labels.keys()):
             label = self._action_labels.get(env_action, str(env_action)).upper()
-            prob_lines.append(f"{label:>8}: {probs[idx]:5.2f}")
+            val = probs[idx] if idx < len(probs) else 0.0
+            prob_lines.append(f"{label:>8}: {val:5.2f}")
         self._prob_var.set("\n".join(prob_lines))
 
-        features = diagnostics["features"]
-        contributions = diagnostics["contributions"][diagnostics["selected_action"]]
-        aero = list(zip(FEATURE_NAMES, features, contributions))
-        aero.sort(key=lambda item: abs(item[2]), reverse=True)
-        lines = [
-            f"{name:>22}: {value:+.3f}  logit={impact:+.3f}"
-            for name, value, impact in aero[:8]
-        ]
-        self._features_label.config(text="\n".join(lines))
+        if "curiosity_scores" in diagnostics:
+            scores = diagnostics["curiosity_scores"]
+            lines = ["Curiosity Scores:"]
+            for idx, env_action in enumerate(self._action_labels.keys()):
+                label = self._action_labels.get(env_action, str(env_action)).upper()
+                val = scores[idx] if idx < len(scores) else 0.0
+                lines.append(f"{label:>8}: {val:+.3f}")
+            self._features_label.config(text="\n".join(lines))
+        elif "contributions" in diagnostics:
+            features = diagnostics["features"]
+            contributions = diagnostics["contributions"][diagnostics["selected_action"]]
+            aero = list(zip(FEATURE_NAMES, features, contributions))
+            aero.sort(key=lambda item: abs(item[2]), reverse=True)
+            lines = [
+                f"{name:>22}: {value:+.3f}  logit={impact:+.3f}"
+                for name, value, impact in aero[:8]
+            ]
+            self._features_label.config(text="\n".join(lines))
+        else:
+            self._features_label.config(text="No feature attribution available")
 
 
 # --------------------------------------------------------------------------- #
