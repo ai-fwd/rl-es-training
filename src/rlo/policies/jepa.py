@@ -39,7 +39,7 @@ class JEPAModule(nn.Module):
             nn.Linear(hidden_dim, latent_dim),
         )
 
-        # 3. Feature Probe: z' -> scalar (e.g. energy)
+        # 3. Learn how the latent structure JEPA captures maps to the agent's energy (passed as metadata)
         self.probe = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),

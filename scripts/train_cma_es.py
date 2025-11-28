@@ -20,7 +20,7 @@ class PolicyType(Enum):
     NONLINEAR_STOCHASTIC = auto()
     NONLINEAR_JEPA = auto()
 
-def make_policy_factory(policy_type: PolicyType, n_features: int, n_actions: int, device: str = "cpu") -> Callable[[], Policy]:
+def make_policy_factory(policy_type: PolicyType, n_features: int, n_actions: int, device: str = "cpu", policy_overrides: Dict[str, object] = None) -> Callable[[], Policy]:
     """Return a zero-arg callable that constructs the requested policy."""
     match policy_type:
         case PolicyType.LINEAR:
@@ -56,17 +56,53 @@ def parse_args() -> argparse.Namespace:
         default="cpu",
         help="Device to use for training (cpu or cuda).",
     )
+
+    parser.add_argument(
+        "--test-run",
+        action="store_true",
+        default=False,
+        help="Run a quick test (set to True if flag is present).",
+    )
+
+    parser.add_argument(
+        "--policy-args",
+        nargs="*",
+        help="Optional key=value overrides for policy parameters (e.g. temperature=0.5).",
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
     
+    overrides = {}
+    if args.policy_args:
+        for item in args.policy_args:
+            if "=" not in item:
+                print(f"Warning: ignoring malformed policy arg '{item}' (expected key=value)")
+                continue
+            key, val_str = item.split("=", 1)
+            # Simple type inference
+            if val_str.lower() == "true":
+                val = True
+            elif val_str.lower() == "false":
+                val = False
+            else:
+                try:
+                    val = int(val_str)
+                except ValueError:
+                    try:
+                        val = float(val_str)
+                    except ValueError:
+                        val = val_str
+            overrides[key] = val
+    #print(f"Policy overrides: {overrides}")
+
     policy = PolicyType.NONLINEAR_JEPA
     
     bundle, history = train_cma_es(
-        make_policy=make_policy_factory(policy, n_features=4, n_actions=4, device=args.device),
+        make_policy=make_policy_factory(policy, n_features=4, n_actions=4, device=args.device, policy_overrides=overrides),
         make_features=make_basic_features,
-        generations=10,
+        generations=1 if args.test_run else 10,
         init_sigma=1,
         pop_multiplier=1.0,
         base_seed=args.seed if args.seed is not None else 0,

@@ -148,10 +148,13 @@ def train_cma_es(
         ##es.disp()
 
         # Add to Replay Buffer
+        #print(f"[Gen {gen:03d}] Transitions Generated: {len(gen_transitions)}")
         replay_buffer.extend(gen_transitions)
+        #print(f"[Gen {gen:03d}] Replay Buffer Size: {len(replay_buffer)}")
+        
         
         # Train Global JEPA
-        if global_jepa is not None and len(replay_buffer) > 1000:
+        if global_jepa is not None and len(replay_buffer) > 10000:
             # Mini-batch training
             batch_size = 256
             n_updates = 50 # Number of updates per generation
@@ -192,7 +195,7 @@ def train_cma_es(
         for idx, info in enumerate(policy_infos):
              actions = []
              # Limit trace size
-             for step_idx, x in enumerate(info[:100]): 
+             for step_idx, x in enumerate(info): 
                  action = int(x["selected_action"])
                  logits = x["logits"]
                  label = EndlessPlatformerEnv.ACTION_LABELS[action]
