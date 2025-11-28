@@ -58,18 +58,19 @@ def evaluate_candidate(
             policy = cast(ParamNonLinearPolicy_JEPA, policy)
             
             # Prepare tensors
-            obs_t = torch.from_numpy(features).float().unsqueeze(0)
+            device = policy.device
+            obs_t = torch.from_numpy(features).float().unsqueeze(0).to(device)
             
             # We need next features for the target
             next_features = make_features(next_obs, next_info, action)
-            next_obs_t = torch.from_numpy(next_features).float().unsqueeze(0)
+            next_obs_t = torch.from_numpy(next_features).float().unsqueeze(0).to(device)
             
-            action_vec = torch.zeros(1, policy.n_actions)
+            action_vec = torch.zeros(1, policy.n_actions).to(device)
             action_vec[0, action] = 1.0
             
             # get energy from next_info to drive curiosity
             energy = next_info.get("energy", 0.0)
-            metadata_t = torch.tensor([[energy]]).float()
+            metadata_t = torch.tensor([[energy]]).float().to(device)
 
             loss_dict = policy.jepa.compute_losses(obs_t, action_vec, next_obs_t, metadata_t)
             

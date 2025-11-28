@@ -21,6 +21,7 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
     # JEPA config
     jepa_hidden_dim: int = 64
     jepa_latent_dim: int = 32
+    device: str = "cpu"
     
     def __post_init__(self):
         # Initialize JEPA
@@ -39,6 +40,10 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
             output_dim=self.n_actions
         )
 
+        self.device = torch.device(self.device)
+        self.jepa.to(self.device)
+        self._model.to(self.device)
+
     def to_payload(self) -> dict:
         """Serialize JEPA weights along with policy config."""
         # Save JEPA state dict to a bytes buffer, then base64 encode
@@ -49,7 +54,8 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
         return {
             "jepa_hidden_dim": self.jepa_hidden_dim,
             "jepa_latent_dim": self.jepa_latent_dim,
-            "jepa_state": jepa_str
+            "jepa_state": jepa_str,
+            "device": str(self.device)
         }
 
     @classmethod
@@ -76,7 +82,7 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
         self, features: np.ndarray, info: Dict[str, Any]
     ) -> Tuple[int, Dict[str, np.ndarray]]:
         # 1. Prepare inputs
-        obs_tensor = torch.from_numpy(features).float().unsqueeze(0) # (1, F)
+        obs_tensor = torch.from_numpy(features).float().unsqueeze(0).to(self.device) # (1, F)
         
         # 2. Compute Curiosity Scores
         with torch.no_grad():
@@ -92,7 +98,7 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
             scores = []
             for a in range(self.n_actions):
                 # One-hot action
-                action_vec = torch.zeros(1, self.n_actions)
+                action_vec = torch.zeros(1, self.n_actions).to(self.device)
                 action_vec[0, a] = 1.0
                 
                 # Imagine future
@@ -115,12 +121,12 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
         # 3. Policy Forward
         # Concatenate features and scores
         input_features = np.concatenate([features, scores_arr])
-        x = torch.from_numpy(input_features).float()
+        x = torch.from_numpy(input_features).float().to(self.device)
         
         logits = self._model(x)
         
         # Deterministic argmax for now
-        selected_action = int(np.argmax(logits.detach().numpy()))
+        selected_action = int(np.argmax(logits.detach().cpu().numpy()))
         
         info = {
             "selected_action": selected_action,

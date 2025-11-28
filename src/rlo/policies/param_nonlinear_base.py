@@ -41,7 +41,7 @@ class ParamNonLinearPolicy(Policy):
 
     def get_params(self) -> np.ndarray:
         """Returns the current parameters of the policy as a 1D numpy array."""
-        return torch.cat([param.view(-1) for param in self._model.parameters()]).detach().numpy()
+        return torch.cat([param.view(-1) for param in self._model.parameters()]).detach().cpu().numpy()
 
     def set_params(self, params: np.ndarray) -> None:
         """Sets the parameters of the nonlinear policy from a 1D numpy array."""

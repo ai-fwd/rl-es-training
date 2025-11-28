@@ -20,7 +20,7 @@ class PolicyType(Enum):
     NONLINEAR_STOCHASTIC = auto()
     NONLINEAR_JEPA = auto()
 
-def make_policy_factory(policy_type: PolicyType, n_features: int, n_actions: int) -> Callable[[], Policy]:
+def make_policy_factory(policy_type: PolicyType, n_features: int, n_actions: int, device: str = "cpu") -> Callable[[], Policy]:
     """Return a zero-arg callable that constructs the requested policy."""
     match policy_type:
         case PolicyType.LINEAR:
@@ -30,7 +30,7 @@ def make_policy_factory(policy_type: PolicyType, n_features: int, n_actions: int
         case PolicyType.NONLINEAR_STOCHASTIC:
             return lambda: ParamNonLinearPolicy_Stochastic(n_actions=n_actions, n_features=n_features)
         case PolicyType.NONLINEAR_JEPA:
-            return lambda: ParamNonLinearPolicy_JEPA(n_actions=n_actions, n_features=n_features)
+            return lambda: ParamNonLinearPolicy_JEPA(n_actions=n_actions, n_features=n_features, device=device)
         case _:
             raise ValueError(f"Unknown policy type: {policy_type}")
 
@@ -50,6 +50,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional RNG seed for deterministic layouts.",
     )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        help="Device to use for training (cpu or cuda).",
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -58,7 +64,7 @@ if __name__ == "__main__":
     policy = PolicyType.NONLINEAR_JEPA
     
     bundle, history = train_cma_es(
-        make_policy=make_policy_factory(policy, n_features=4, n_actions=4),
+        make_policy=make_policy_factory(policy, n_features=4, n_actions=4, device=args.device),
         make_features=make_basic_features,
         generations=10,
         init_sigma=1,
