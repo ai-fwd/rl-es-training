@@ -40,8 +40,9 @@ class GenerationStats:
                 "step": idx,
                 "action_index": action,
                 "action_label": label,
-                "logits": _serialize_float_list(x["logits"]),
             }
+            if "logits" in x:
+                serialized["logits"] = _serialize_float_list(x["logits"])
             if "curiosity_scores" in x:
                 serialized["curiosity_scores"] = _serialize_float_list(x["curiosity_scores"])
             if "validity" in x:

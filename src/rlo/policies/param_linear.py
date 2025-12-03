@@ -74,3 +74,46 @@ class ParamLinearPolicy(Policy):
         )
         policy.set_params(flat_params)
         return policy
+
+@dataclass
+class ParamLinearPolicy_RandomWalk(Policy):
+        
+    def num_params(self) -> int:
+        return 0
+
+    def get_params(self) -> np.ndarray:
+        return np.array([])
+
+    def set_params(self, params: np.ndarray) -> None:
+        return
+
+    def act(
+        self, features: np.ndarray, info: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, np.ndarray]]:
+        probabilities = np.ones(self.n_actions) / self.n_actions
+        selected_action = int(np.random.choice(self.n_actions, p=probabilities))
+
+        info = {
+            "selected_action": selected_action,
+            "logits": np.zeros(self.n_actions),
+            "probabilities": probabilities,
+            "contributions": np.zeros((self.n_actions, features.shape[0])),
+        }
+
+        return selected_action, info
+
+    @classmethod
+    def from_flat(
+        cls,
+        flat_params: np.ndarray,
+        n_actions: int,
+        n_features: int,
+    ) -> ParamLinearPolicy_RandomWalk:
+        """Creates a ParamLinearPolicy instance from 1-D flat parameters."""
+
+        policy = cls(
+            n_actions=n_actions,
+            n_features=n_features,
+        )
+        policy.set_params(flat_params)
+        return policy

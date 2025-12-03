@@ -4,6 +4,7 @@ from .param_base import (
 )
 from .param_linear import (
     ParamLinearPolicy,
+    ParamLinearPolicy_RandomWalk
 )
 
 # A simple registry so serialized bundles can record and later lookup
@@ -38,6 +39,7 @@ from .param_nonlinear_jepa import ParamNonLinearPolicy_JEPA
 __all__ = [
     "Policy",
     "ParamLinearPolicy",
+    "ParamLinearPolicy_RandomWalk",
     "ParamNonLinearPolicy",
     "ParamNonLinearPolicy_ArgMax",
     "ParamNonLinearPolicy_Stochastic",
