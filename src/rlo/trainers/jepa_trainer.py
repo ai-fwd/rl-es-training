@@ -17,6 +17,9 @@ from rlo.policies.param_nonlinear_jepa import ParamNonLinearPolicy_JEPA
 from rlo.utils.logging import GenerationStats
 from rlo.utils.serialization import PolicyBundle
 
+from rlo.params import ParamReader
+
+
 
 class TransitionDataset(Dataset):
     """Simple dataset for (s, a, s') tuples collected from rollouts."""
@@ -48,18 +51,16 @@ class JEPALightningModule(pl.LightningModule):
     def __init__(
         self,
         input_dim: int,
-        hidden_dim: int,
-        latent_dim: int,
         action_dim: int,
-        lr: float = 1e-3,
         tau: float = 0.995,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
+        
+        self.lr = ParamReader.get_instance().get(self, "learning_rate", 1e-3)
+        
         self.jepa = JEPAModule(
             input_dim=input_dim,
-            hidden_dim=hidden_dim,
-            latent_dim=latent_dim,
             action_dim=action_dim,
             tau=tau,
         )
@@ -94,7 +95,7 @@ class JEPALightningModule(pl.LightningModule):
         self.jepa.update_target_encoder()
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
+        return torch.optim.Adam(self.parameters(), lr=self.lr)
 
 
 def evaluate_candidate(
@@ -245,16 +246,18 @@ def train_jepa(
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False, num_workers=15, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=15) if val_ds is not None else None
 
+
     model = JEPALightningModule(
         input_dim=n_features,
-        hidden_dim=64,
-        latent_dim=32,
         action_dim=n_actions,
-        lr=learning_rate,
     )
 
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save params.yaml
+    reader = ParamReader.get_instance()
+    reader.dump(str(checkpoint_dir / "params.yaml"))
     monitor_metric = "val_loss" if val_loader is not None else "train_loss"
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         dirpath=str(checkpoint_dir),

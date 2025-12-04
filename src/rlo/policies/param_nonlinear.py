@@ -44,23 +44,25 @@ class ParamNonLinearPolicy_ArgMax(ParamNonLinearPolicy):
 class ParamNonLinearPolicy_Stochastic(ParamNonLinearPolicy):
     """Stochastic MLP policy with configurable temperature.
 
-    The `temperature` field is stored in the serialized payload so validation
-    and training runs can use different temperatures without code changes.
+    The `temperature` field is now managed by ParamReader.
     """
-    temperature: float = 1.0
 
     def __post_init__(self):
         # initialize base model
         super().__post_init__()
 
     def to_payload(self) -> dict:
-        return {"temperature": float(self.temperature)}
+        return {}
 
     @classmethod
     def from_payload(
         cls, flat_params: np.ndarray, n_actions: int, n_features: int, policy_kwargs: dict | None = None
     ) -> ParamNonLinearPolicy_Stochastic:
         policy_kwargs = policy_kwargs or {}
+        # Legacy support: if temperature is in kwargs, we could warn or ignore.
+        # For now, we just pass kwargs to super (which ignores them mostly)
+        if "temperature" in policy_kwargs:
+            del policy_kwargs["temperature"]
         return super().from_payload(flat_params, n_actions, n_features, policy_kwargs)
 
     def act(
@@ -74,7 +76,8 @@ class ParamNonLinearPolicy_Stochastic(ParamNonLinearPolicy):
         logits = self._model(x)
 
         # temperature may be set on the instance (default 1.0)
-        T = getattr(self, "temperature", 1.0)
+        from rlo.params import ParamReader
+        T = ParamReader.get_instance().get(self, "temperature", 1.0)
         probabilities = F.softmax(logits / float(T), dim=-1)
 
         # sample an action from the probability distribution

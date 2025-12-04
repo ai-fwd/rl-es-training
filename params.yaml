@@ -1,0 +1,13 @@
+ParamNonLinearPolicy_Stochastic:
+  temperature: 1.0
+  hidden_dim: 32
+
+ParamNonLinearPolicy_JEPA:
+  temperature: 1.0
+
+JEPAModule:
+  hidden_dim: 64
+  latent_dim: 32
+
+JEPALightningModule:
+  learning_rate: 0.001

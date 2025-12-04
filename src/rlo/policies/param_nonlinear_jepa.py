@@ -12,18 +12,17 @@ import torch.nn.functional as F
 from .param_nonlinear_base import ParamNonLinearPolicy, MLP
 from .jepa import JEPAModule
 from rlo.policies import register_policy
+from rlo.params import ParamReader
+
 
 @dataclass
 @register_policy
 class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
     """Policy that uses JEPA-based curiosity scores as input features."""
     
-    # JEPA config
-    jepa_hidden_dim: int = 64
-    jepa_latent_dim: int = 32
-    temperature: float = 1.0
-    
     def __post_init__(self):
+        reader = ParamReader.get_instance()
+
         # Initialize Policy MLP
         # Input to MLP is features + n_actions (one score per action)
         self._model = MLP(
@@ -36,8 +35,6 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
         # This is just a default instance.
         self.jepa = JEPAModule(
             input_dim=self.n_features,
-            hidden_dim=self.jepa_hidden_dim,
-            latent_dim=self.jepa_latent_dim,
             action_dim=self.n_actions,
         )
 
@@ -48,11 +45,12 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
         torch.save(self.jepa.state_dict(), buffer)
         jepa_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
         
+        # We only save the state. Config is handled by params.yaml, 
+        # but we can save current values for reference or fallback.
+        reader = ParamReader.get_instance()
+        
         return {
-            "jepa_hidden_dim": self.jepa_hidden_dim,
-            "jepa_latent_dim": self.jepa_latent_dim,
             "jepa_state": jepa_str,
-            "temperature": self.temperature,
         }
 
     @classmethod
@@ -122,7 +120,7 @@ class ParamNonLinearPolicy_JEPA(ParamNonLinearPolicy):
         logits = self._model(x)
         
         # Stochastic Sampling
-        T = getattr(self, "temperature", 1.0)
+        T = ParamReader.get_instance().get(self, "temperature", 1.0)
         probabilities = F.softmax(logits / float(T), dim=-1)
         dist = torch.distributions.Categorical(probs=probabilities)
         selected_action = int(dist.sample())

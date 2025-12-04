@@ -13,6 +13,7 @@ from rlo.trainers import train_cma_es
 from enum import Enum, auto
 from typing import Callable
 
+from rlo.params import ParamReader
 
 class PolicyType(Enum):
     LINEAR = auto()
@@ -74,6 +75,14 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
     
+    # Initialize ParamReader and set overrides
+    reader = ParamReader.get_instance()
+    
+    # Load default params if available
+    default_params = Path("params.yaml")
+    if default_params.exists():
+        reader.load(str(default_params))
+
     overrides = {}
     if args.policy_args:
         for item in args.policy_args:
@@ -95,12 +104,15 @@ if __name__ == "__main__":
                     except ValueError:
                         val = val_str
             overrides[key] = val
-    #print(f"Policy overrides: {overrides}")
+    
+    if overrides:
+        print(f"Policy overrides: {overrides}")
+        reader.set_overrides(**overrides)
 
     policy = PolicyType.NONLINEAR_JEPA
     
     bundle, history = train_cma_es(
-        make_policy=make_policy_factory(policy, n_features=4, n_actions=4, device=args.device, policy_overrides=overrides),
+        make_policy=make_policy_factory(policy, n_features=4, n_actions=4, device=args.device),
         make_features=make_basic_features,
         generations=1 if args.test_run else 10,
         init_sigma=1,
@@ -127,6 +139,12 @@ if __name__ == "__main__":
     policy_path = save_dir / f"policy.npz"
     bundle.save(policy_path)
     print(f"Saved best policy bundle to {policy_path}")
+    
+    # Save params.yaml
+    params_path = save_dir / "params.yaml"
+    reader.dump(str(params_path))
+    print(f"Saved params to {params_path}")
+
     print("Best policy metadata:", json.dumps(bundle.metadata, indent=2))
 
  

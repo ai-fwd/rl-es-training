@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict
 
 from rlo.features import make_basic_features
+from rlo.params import ParamReader
 from rlo.policies import ParamLinearPolicy_RandomWalk
 from rlo.policies.param_base import Policy
 from typing import Callable
@@ -60,6 +61,14 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
+
+    # Initialize ParamReader and set overrides
+    reader = ParamReader.get_instance()
+    
+    # Load default params if available
+    default_params = Path("params.yaml")
+    if default_params.exists():
+        reader.load(str(default_params))
     
     overrides = {}
     if args.policy_args:
@@ -82,6 +91,10 @@ if __name__ == "__main__":
                     except ValueError:
                         val = val_str
             overrides[key] = val
+
+    if overrides:
+        print(f"Policy overrides: {overrides}")
+        reader.set_overrides(**overrides)
 
     policy = PolicyType.LINEAR_RANDOM_WALK
 

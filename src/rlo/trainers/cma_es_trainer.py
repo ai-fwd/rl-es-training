@@ -62,10 +62,11 @@ def train_cma_es(
     if isinstance(policy, ParamNonLinearPolicy_JEPA):
         policy = cast(ParamNonLinearPolicy_JEPA, policy)
         # Use the config from the policy instance
+        from rlo.params import ParamReader
+        reader = ParamReader.get_instance()
+        
         global_jepa = JEPAModule(
             input_dim=policy.n_features,
-            hidden_dim=policy.jepa_hidden_dim,
-            latent_dim=policy.jepa_latent_dim,
             action_dim=policy.n_actions,
         )
         jepa_optimizer = torch.optim.Adam(global_jepa.parameters(), lr=1e-3)

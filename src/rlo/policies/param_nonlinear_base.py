@@ -10,11 +10,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from . import Policy
+from rlo.params import ParamReader
+
 
 # A simple MLP with one hidden layer that will be used in the ParamNonLinearPolicy
 class MLP(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
         super(MLP, self).__init__()
+        
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
 
@@ -31,8 +34,10 @@ class MLP(nn.Module):
 @dataclass
 class ParamNonLinearPolicy(Policy):
     def __post_init__(self):
+        reader = ParamReader.get_instance()
+
         # Instead of defining the weights and biases directly, we define an MLP to represent the policy
-        self._model = MLP(input_dim=self.n_features, hidden_dim=self.n_features, output_dim=self.n_actions)
+        self._model = MLP(input_dim=self.n_features, hidden_dim=reader.get(self, "hidden_dim", 32), output_dim=self.n_actions)
 
     def num_params(self) -> int:
         """Returns the number of parameters in the nonlinear policy."""

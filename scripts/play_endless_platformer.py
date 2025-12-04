@@ -443,6 +443,25 @@ def main() -> None:
 
     bundle: Optional[PolicyBundle] = None
     if args.policy is not None:
+        # Initialize ParamReader
+        from rlo.params import ParamReader
+        reader = ParamReader.get_instance()
+        
+        # 1. Try to load params.yaml from the policy directory
+        policy_path = Path(args.policy)
+        local_params = policy_path.parent / "params.yaml"
+        if local_params.exists():
+            print(f"Loading config from {local_params}")
+            reader.load(str(local_params))
+        else:
+            # Fallback to project root params.yaml if exists
+            # Assuming script is run from project root or we can find it
+            default_params = Path("params.yaml")
+            if default_params.exists():
+                print(f"Loading config from {default_params}")
+                reader.load(str(default_params))
+
+        # 2. Parse overrides
         overrides = {}
         if args.policy_args:
             for item in args.policy_args:
@@ -465,8 +484,11 @@ def main() -> None:
                             val = val_str
                 overrides[key] = val
             print(f"Policy overrides: {overrides}")
+            reader.set_overrides(**overrides)
 
-        bundle = PolicyBundle.load(args.policy, policy_overrides=overrides)
+        # We don't pass overrides to PolicyBundle.load anymore, 
+        # as the policy will query ParamReader.
+        bundle = PolicyBundle.load(args.policy)
         print(f"Loaded policy bundle from {args.policy}")
         if not args.scratchpad:
             print("Tip: re-run with --scratchpad to see the policy diagnostics panel.")
