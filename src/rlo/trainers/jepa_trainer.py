@@ -179,55 +179,78 @@ def train_jepa(
     returns = [] # should all be max horizon unless early termination
     history: list[GenerationStats] = []
 
-    # Collect transitions from fresh rollouts.
-    transitions: list[Dict[str, Any]] = []
-    for episode in range(num_episodes):
-        seed = base_seed + episode * 997
-        ret, policy_info, episode_transitions = evaluate_candidate(
-            make_policy=make_policy,
-            make_features=make_features,
-            horizon=horizon,
-            seed=seed,
-        )
-        returns.append(ret)
-        transitions.extend(episode_transitions)
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = checkpoint_dir / f"transitions-{base_seed}.pkl"
 
-        # vectorize all the candidate returns
-        ret_array = np.array(returns, dtype=np.float32)
-        gen_best = float(ret_array.max())
+    if cache_file.exists():
+        print(f"Loading transitions from {cache_file}...")
+        import pickle
+        with open(cache_file, "rb") as f:
+            data = pickle.load(f)
+            transitions = data["transitions"]
+            returns = data["returns"]
+            history = data["history"]
+    else:
+        # Collect transitions from fresh rollouts.
+        transitions: list[Dict[str, Any]] = []
+        for episode in range(num_episodes):
+            seed = base_seed + episode * 997
+            ret, policy_info, episode_transitions = evaluate_candidate(
+                make_policy=make_policy,
+                make_features=make_features,
+                horizon=horizon,
+                seed=seed,
+            )
+            returns.append(ret)
+            transitions.extend(episode_transitions)
 
-        # Re-implementing trace logging briefly to match original file structure
-        population_traces = []
-        actions = []
+            # vectorize all the candidate returns
+            ret_array = np.array(returns, dtype=np.float32)
+            gen_best = float(ret_array.max())
 
-        for step_idx, x in enumerate(policy_info):
-            action = int(x["selected_action"])
-            label = EndlessPlatformerEnv.ACTION_LABELS[action]
+            # Re-implementing trace logging briefly to match original file structure
+            population_traces = []
+            actions = []
+
+            for step_idx, x in enumerate(policy_info):
+                action = int(x["selected_action"])
+                label = EndlessPlatformerEnv.ACTION_LABELS[action]
+                
+                action_entry = {
+                    "step": step_idx,
+                    "action_index": action,
+                    "action_label": label,
+                }
+                
+                actions.append(action_entry)
             
-            action_entry = {
-                "step": step_idx,
-                "action_index": action,
-                "action_label": label,
-            }
-            
-            actions.append(action_entry)
-        
-        population_traces.append({
-            "iteration": episode,
-            "return": float(ret),
-            "actions": actions
-        })
+            population_traces.append({
+                "iteration": episode,
+                "return": float(ret),
+                "actions": actions
+            })
 
+            
+            stats = GenerationStats(
+                generation=episode,
+                wall_time_s=0,
+                best_reward=gen_best,
+                sigma=0,
+                policy_info=policy_info,
+                population_traces=population_traces,
+            )
+            history.append(stats)
         
-        stats = GenerationStats(
-            generation=episode,
-            wall_time_s=0,
-            best_reward=gen_best,
-            sigma=0,
-            policy_info=policy_info,
-            population_traces=population_traces,
-        )
-        history.append(stats)
+        # Save to cache
+        print(f"Saving transitions to {cache_file}...")
+        import pickle
+        with open(cache_file, "wb") as f:
+            pickle.dump({
+                "transitions": transitions,
+                "returns": returns,
+                "history": history
+            }, f)
 
     if not transitions:
         raise RuntimeError("No transitions collected for JEPA training.")
@@ -252,8 +275,6 @@ def train_jepa(
         action_dim=n_actions,
     )
 
-    checkpoint_dir = Path(checkpoint_dir)
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
     
     # Save params.yaml
     reader = ParamReader.get_instance()

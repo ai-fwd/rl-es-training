@@ -104,7 +104,7 @@ if __name__ == "__main__":
     history = train_jepa(
         make_policy=make_policy(n_features=4, n_actions=4),
         make_features=make_basic_features,
-        base_seed=args.seed if args.seed is not None else 0,
+        base_seed=args.seed if args.seed is not None else 42,
         horizon=1800,  # steps not seconds
         checkpoint_dir=save_dir
     )
