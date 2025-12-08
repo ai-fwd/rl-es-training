@@ -850,6 +850,10 @@ class EndlessPlatformerEnv(Env):
         for orb in self._energy_orbs:
             ox, oy, _ = orb
             dx = ox - anchor_x
+
+            if dx < 0:
+                continue  # only consider orbs in front of the character
+
             dy = oy - anchor_y
             if dx * dx + dy * dy <= max_dist2:
                 return orb
@@ -857,7 +861,8 @@ class EndlessPlatformerEnv(Env):
 
     def _handle_energy_orbs_collision(self) -> Tuple[float, float, float] | None:
         # Character AABB
-        x_left = self._character_x - (self.character_width / 2.0)
+        x_left = self._character_x
+        #x_left = self._character_x - (self.character_width / 2.0)
         x_right = self._character_x + (self.character_width / 2.0)
         y_bottom = self._character_y
         y_top = self._character_y + self.character_height
@@ -867,6 +872,11 @@ class EndlessPlatformerEnv(Env):
             cx = min(max(ox, x_left), x_right)
             cy = min(max(oy, y_bottom), y_top)
             dx = ox - cx
+
+            if dx < 0:
+                next_orbs.append((ox, oy, r))
+                continue  # only consider orbs in front of the character
+
             dy = oy - cy
             if dx * dx + dy * dy <= r * r:
                 # return the orb that was collected

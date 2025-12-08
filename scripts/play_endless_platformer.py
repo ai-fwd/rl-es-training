@@ -310,7 +310,6 @@ class ReplayController:
     def finished(self) -> bool:
         return self._cursor >= len(self.trace.actions)
 
-
 class ReplayScratchpad:
     """Minimal scratchpad for replay mode."""
 
@@ -351,7 +350,6 @@ class ReplayScratchpad:
         action_label = self._action_labels.get(action_id, f"id={action_id}")
         self._step_var.set(f"Step: {step}")
         self._action_var.set(f"Action: {action_label.upper()}")
-
 
 class ScratchpadPanel:
     """Tkinter widget that renders policy insights alongside the viewport."""
@@ -506,6 +504,79 @@ class ScratchpadPanel:
             self._features_label.config(text="No feature attribution available")
 
 
+class InfoScratchpad:
+    """Dynamic scratchpad that visualizes the environment info dictionary."""
+
+    def __init__(self, parent: tk.Misc) -> None:
+        self._frame = tk.Frame(parent, padx=10, pady=10, bg="#1e1e1e")
+        self._frame.configure(highlightbackground="#444", highlightthickness=1)
+
+        title = tk.Label(
+            self._frame,
+            text="Environment Info",
+            font=("TkDefaultFont", 14, "bold"),
+            fg="#ffffff",
+            bg="#1e1e1e",
+        )
+        title.pack(anchor="w", pady=(0, 10))
+
+        self._vars: Dict[str, tk.StringVar] = {}
+        self._labels: Dict[str, tk.Label] = {}
+
+    @property
+    def frame(self) -> tk.Frame:
+        return self._frame
+
+    def clear(self) -> None:
+        # No-op or reset all vars?
+        pass
+
+    def update(self, info: Dict[str, Any]) -> None:
+        seen_keys = set()
+        
+        # Sort keys for stable display order
+        for key in sorted(info.keys()):
+            val = info[key]
+            # Simple formatting
+            if isinstance(val, float):
+                val_str = f"{val:.4f}"
+            else:
+                val_str = str(val)
+            
+            display_text = f"{key}: {val_str}"
+            seen_keys.add(key)
+
+            if key not in self._vars:
+                # Create new entry
+                var = tk.StringVar(value=display_text)
+                label = tk.Label(
+                    self._frame,
+                    textvariable=var,
+                    fg="#d7d7d7",
+                    bg="#1e1e1e",
+                    anchor="w",
+                    justify="left"
+                )
+                label.pack(fill="x", anchor="w")
+                self._vars[key] = var
+                self._labels[key] = label
+            else:
+                # Update existing entry
+                self._vars[key].set(display_text)
+                # Ensure it's packed (in case it was hidden, though we destroy hidden ones below)
+                if not self._labels[key].winfo_ismapped():
+                     self._labels[key].pack(fill="x", anchor="w")
+
+        # Cleanup keys that are no longer present
+        current_keys = list(self._labels.keys())
+        for key in current_keys:
+            if key not in seen_keys:
+                self._labels[key].destroy()
+                del self._labels[key]
+                del self._vars[key]
+
+
+
 # --------------------------------------------------------------------------- #
 # Player application                                                          #
 # --------------------------------------------------------------------------- #
@@ -536,10 +607,9 @@ class PlayerApp:
             ReplayController(replay_trace) if replay_trace is not None else None
         )
         self.replay_trace = replay_trace
-        self.show_scratchpad = show_scratchpad and (
-            self.policy_controller is not None or self.replay_controller is not None
-        )
+        self.show_scratchpad = show_scratchpad
         self.pixel_scale = max(1, int(pixel_scale))
+
 
         self.root = tk.Tk()
         self.root.title("Endless Platformer Viewer")
@@ -583,8 +653,12 @@ class PlayerApp:
                 self.scratchpad = ReplayScratchpad(
                     self._container, self.replay_trace, self.env.ACTION_LABELS
                 )
-            if self.scratchpad:
-                self.scratchpad.frame.pack(side="right", fill="y", padx=8, pady=8)
+            else:
+                self.scratchpad = InfoScratchpad(self._container)
+            
+            self.scratchpad.frame.pack(side="right", fill="y", padx=8, pady=8)
+            
+
 
         self._keys_down: Dict[str, bool] = {}
         self._manual_control = (
@@ -682,6 +756,9 @@ class PlayerApp:
                 step=self._step_counter,
                 action_id=action,
             )
+        else:
+            self.scratchpad.update(next_info)
+
 
         rgb = self.env.render()
         self._draw_frame(rgb)
@@ -800,6 +877,7 @@ def main() -> None:
         pixel_scale=args.scale,
         replay_trace=replay_trace,
     )
+
     app.run()
 
 
