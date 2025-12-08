@@ -110,11 +110,11 @@ def evaluate_candidate(
     policy = make_policy()
     policy.reset()
 
-    # Create environment
+    # Create environment - using defaults to encourage real dynamics
     env = EndlessPlatformerEnv(
-        natural_drain_per_sec=0.1,
-        move_drain_per_sec=0.15,
-        jump_drain=0.2,
+        # natural_drain_per_sec=0.1,
+        # move_drain_per_sec=0.15,
+        # jump_drain=0.2,
         seed=seed,
     )
     obs, info = env.reset(seed=seed)
@@ -161,13 +161,11 @@ def train_jepa(
     make_policy: Callable[[], Policy],
     make_features: Callable[[Dict[str, Any], Dict[str, Any], int], np.ndarray],
     base_seed: int = 42,
-    horizon: int = 1800,
+    horizon: int = 3600,
     *,
-    num_episodes: int = 10,
+    num_episodes: int = 50,
     batch_size: int = 256,
-    max_epochs: int = 10,
     val_split: float = 0.1,
-    learning_rate: float = 1e-3,
     checkpoint_dir: str | Path = "runs/jepa",
     accelerator: str = "auto",
 ) -> list[GenerationStats]:
@@ -289,27 +287,29 @@ def train_jepa(
     )
 
     trainer = pl.Trainer(
-        max_epochs=max_epochs,
+        max_epochs=25,
         callbacks=[checkpoint_callback],
         logger=False,
         enable_checkpointing=True,
         default_root_dir=str(checkpoint_dir),
         accelerator=accelerator,
         devices=1,
+        deterministic=True,
+        fast_dev_run=True
     )
 
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
-    best_checkpoint = checkpoint_callback.best_model_path or None
-    best_score = checkpoint_callback.best_model_score
+    # best_checkpoint = checkpoint_callback.best_model_path or None
+    # best_score = checkpoint_callback.best_model_score
 
-    if best_checkpoint:
-        best_module = JEPALightningModule.load_from_checkpoint(best_checkpoint)
-        trained_jepa = best_module.jepa
-    else:
-        trained_jepa = model.jepa
+    # if best_checkpoint:
+    #     best_module = JEPALightningModule.load_from_checkpoint(best_checkpoint)
+    #     trained_jepa = best_module.jepa
+    # else:
+    #     trained_jepa = model.jepa
 
-    trained_jepa.eval()
+    # trained_jepa.eval()
 
     return history
 

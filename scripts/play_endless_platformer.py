@@ -19,10 +19,12 @@ Enable ``--scratchpad`` to reveal detailed diagnostics alongside the viewport.
 from __future__ import annotations
 
 import argparse
+import json
+import pickle
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -49,11 +51,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional RNG seed for deterministic layouts.",
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--policy",
         type=Path,
         default=None,
         help="Path to a saved policy bundle (.npz). If provided, the agent runs automatically.",
+    )
+    mode_group.add_argument(
+        "--replay-file",
+        type=Path,
+        default=None,
+        help="Path to a history.json or transitions-*.pkl produced by JEPA training. Plays back recorded actions without a policy.",
     )
     parser.add_argument(
         "--stochastic",
@@ -78,11 +87,176 @@ def parse_args() -> argparse.Namespace:
         help="Multiplier for the simulation speed (1.0 = real-time).",
     )
     parser.add_argument(
+        "--replay-generation",
+        type=int,
+        default=0,
+        help="Generation index to replay from the history file.",
+    )
+    parser.add_argument(
+        "--replay-iteration",
+        type=int,
+        default=0,
+        help="Iteration within the generation's population traces to replay.",
+    )
+    parser.add_argument(
         "--policy-args",
         nargs="*",
         help="Optional key=value overrides for policy parameters (e.g. temperature=0.5).",
     )
     return parser.parse_args()
+
+
+@dataclass
+class ReplayTrace:
+    actions: List[int]
+    generation: Optional[int] = None
+    iteration: Optional[int] = None
+    reward: Optional[float] = None
+
+
+def _load_history_from_json(path: Path) -> List[Dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    if isinstance(payload, dict) and "history" in payload:
+        return payload["history"]
+    if isinstance(payload, list):
+        return payload
+    raise ValueError(f"Unrecognised JSON format in {path}")
+
+
+def _load_history_from_pickle(path: Path) -> List[Any]:
+    with path.open("rb") as fh:
+        payload = pickle.load(fh)
+    if isinstance(payload, dict) and "history" in payload:
+        return payload["history"]
+    if isinstance(payload, list):
+        return payload
+    raise ValueError(f"Unrecognised pickle format in {path}")
+
+
+def _get_generation(entry: Any) -> Optional[int]:
+    if isinstance(entry, dict):
+        return entry.get("generation")
+    return getattr(entry, "generation", None)
+
+
+def _get_population_traces(entry: Any) -> List[Dict[str, Any]]:
+    if isinstance(entry, dict):
+        return entry.get("population") or entry.get("population_traces") or []
+    return getattr(entry, "population_traces", []) or []
+
+
+def _get_candidate_iteration(candidate: Any) -> Optional[int]:
+    if isinstance(candidate, dict):
+        return candidate.get("iteration")
+    return getattr(candidate, "iteration", None)
+
+
+def _get_actions_from_candidate(candidate: Any) -> List[Any]:
+    if isinstance(candidate, dict):
+        return candidate.get("actions") or candidate.get("trace") or []
+    return getattr(candidate, "actions", []) or []
+
+
+def _normalize_actions(action_entries: List[Any]) -> List[int]:
+    actions: List[int] = []
+    for entry in action_entries:
+        if isinstance(entry, dict):
+            if "action_index" in entry:
+                actions.append(int(entry["action_index"]))
+            elif "action" in entry:
+                actions.append(int(entry["action"]))
+            elif "selected_action" in entry:
+                actions.append(int(entry["selected_action"]))
+        else:
+            try:
+                actions.append(int(entry))
+            except Exception:
+                continue
+    return actions
+
+
+def _get_best_trace(entry: Any) -> List[Any]:
+    if isinstance(entry, dict):
+        best_policy = entry.get("best_policy") or {}
+        return best_policy.get("trace") or []
+    policy_info = getattr(entry, "policy_info", None)
+    if isinstance(policy_info, list):
+        return policy_info
+    return []
+
+
+def _get_candidate_return(candidate: Any, fallback_best: Optional[float]) -> Optional[float]:
+    if isinstance(candidate, dict):
+        if "return" in candidate:
+            return float(candidate["return"])
+    else:
+        val = getattr(candidate, "return_", None) or getattr(candidate, "return_val", None)
+        if val is not None:
+            try:
+                return float(val)
+            except Exception:
+                pass
+    return fallback_best
+
+
+def load_replay_trace(path: Path, generation: int, iteration: int) -> ReplayTrace:
+    if not path.exists():
+        raise FileNotFoundError(f"Replay file not found: {path}")
+
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        history = _load_history_from_json(path)
+    elif suffix == ".pkl":
+        history = _load_history_from_pickle(path)
+    else:
+        raise ValueError("Replay file must be a .json or .pkl produced by JEPA training.")
+
+    target = None
+    for entry in history:
+        if _get_generation(entry) == generation:
+            target = entry
+            break
+
+    if target is None:
+        raise ValueError(f"Generation {generation} not found in {path}")
+
+    population = _get_population_traces(target)
+    candidate = next(
+        (cand for cand in population if _get_candidate_iteration(cand) == iteration),
+        None,
+    )
+    if candidate is None and iteration < len(population):
+        candidate = population[iteration]
+
+    actions: List[int] = []
+    candidate_return: Optional[float] = None
+    best_reward: Optional[float] = None
+    if isinstance(target, dict):
+        best_reward = target.get("best_reward")
+    else:
+        best_reward = getattr(target, "best_reward", None)
+
+    if candidate is not None:
+        actions = _normalize_actions(_get_actions_from_candidate(candidate))
+        candidate_return = _get_candidate_return(candidate, best_reward)
+
+    if not actions:
+        actions = _normalize_actions(_get_best_trace(target))
+        if candidate_return is None:
+            candidate_return = best_reward
+
+    if not actions:
+        raise ValueError(
+            f"No actions found for generation={generation}, iteration={iteration} in {path}"
+        )
+
+    return ReplayTrace(
+        actions=actions,
+        generation=generation,
+        iteration=iteration,
+        reward=candidate_return,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -112,6 +286,71 @@ class PolicyController:
         diagnostics = dict(diagnostics)
         diagnostics["features"] = features
         return action_id, diagnostics
+
+
+@dataclass
+class ReplayController:
+    """Simple cursor over a pre-recorded action trace."""
+
+    trace: ReplayTrace
+
+    def __post_init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self._cursor = 0
+
+    def next_action(self) -> int:
+        if self._cursor >= len(self.trace.actions):
+            raise StopIteration
+        action = int(self.trace.actions[self._cursor])
+        self._cursor += 1
+        return action
+
+    def finished(self) -> bool:
+        return self._cursor >= len(self.trace.actions)
+
+
+class ReplayScratchpad:
+    """Minimal scratchpad for replay mode."""
+
+    def __init__(self, parent: tk.Misc, trace: ReplayTrace, action_labels: Dict[int, str]) -> None:
+        self._frame = tk.Frame(parent, padx=10, pady=10, bg="#1e1e1e")
+        self._frame.configure(highlightbackground="#444", highlightthickness=1)
+
+        title = tk.Label(
+            self._frame,
+            text="Replay Info",
+            font=("TkDefaultFont", 14, "bold"),
+            fg="#ffffff",
+            bg="#1e1e1e",
+        )
+        title.pack(anchor="w")
+
+        reward_text = (
+            f"Max reward: {trace.reward:.3f}"
+            if trace.reward is not None
+            else "Max reward: —"
+        )
+        self._reward_var = tk.StringVar(value=reward_text)
+        self._step_var = tk.StringVar(value="Step: 0")
+        self._action_var = tk.StringVar(value="Action: —")
+
+        for var in (self._reward_var, self._step_var, self._action_var):
+            tk.Label(self._frame, textvariable=var, fg="#d7d7d7", bg="#1e1e1e").pack(
+                anchor="w"
+            )
+
+        self._action_labels = action_labels
+
+    @property
+    def frame(self) -> tk.Frame:
+        return self._frame
+
+    def update(self, step: int, action_id: int) -> None:
+        action_label = self._action_labels.get(action_id, f"id={action_id}")
+        self._step_var.set(f"Step: {step}")
+        self._action_var.set(f"Action: {action_label.upper()}")
 
 
 class ScratchpadPanel:
@@ -284,6 +523,7 @@ class PlayerApp:
         deterministic_policy: bool = True,
         show_scratchpad: bool = False,
         pixel_scale: int = PIXEL_SCALE_DEFAULT,
+        replay_trace: Optional[ReplayTrace] = None,
     ) -> None:
         self.seed = seed
         self.env = env
@@ -292,7 +532,13 @@ class PlayerApp:
             if policy_bundle is not None
             else None
         )
-        self.show_scratchpad = show_scratchpad and self.policy_controller is not None
+        self.replay_controller = (
+            ReplayController(replay_trace) if replay_trace is not None else None
+        )
+        self.replay_trace = replay_trace
+        self.show_scratchpad = show_scratchpad and (
+            self.policy_controller is not None or self.replay_controller is not None
+        )
         self.pixel_scale = max(1, int(pixel_scale))
 
         self.root = tk.Tk()
@@ -328,14 +574,23 @@ class PlayerApp:
         )
 
         self.scratchpad = None
-        if self.show_scratchpad and self.policy_controller:
-            self.scratchpad = ScratchpadPanel(
-                self._container, self.policy_controller.bundle, self.env.ACTION_LABELS
-            )
-            self.scratchpad.frame.pack(side="right", fill="y", padx=8, pady=8)
+        if self.show_scratchpad:
+            if self.policy_controller:
+                self.scratchpad = ScratchpadPanel(
+                    self._container, self.policy_controller.bundle, self.env.ACTION_LABELS
+                )
+            elif self.replay_controller and self.replay_trace:
+                self.scratchpad = ReplayScratchpad(
+                    self._container, self.replay_trace, self.env.ACTION_LABELS
+                )
+            if self.scratchpad:
+                self.scratchpad.frame.pack(side="right", fill="y", padx=8, pady=8)
 
         self._keys_down: Dict[str, bool] = {}
-        if self.policy_controller is None:
+        self._manual_control = (
+            self.policy_controller is None and self.replay_controller is None
+        )
+        if self._manual_control:
             self.root.bind("<KeyPress>", self._on_key_press)
             self.root.bind("<KeyRelease>", self._on_key_release)
         else:
@@ -378,7 +633,19 @@ class PlayerApp:
         current_info = self.info
         current_metrics = current_obs["metrics"]
 
-        if self.policy_controller is not None:
+        if self.replay_controller is not None:
+            if self.replay_controller.finished():
+                print("Replay finished.")
+                self.close()
+                return
+            try:
+                action = self.replay_controller.next_action()
+            except StopIteration:
+                print("Replay finished.")
+                self.close()
+                return
+            diagnostics = None
+        elif self.policy_controller is not None:
             action, diagnostics = self.policy_controller.act(current_obs, current_info)
         else:
             action = self._resolve_manual_action()
@@ -390,6 +657,10 @@ class PlayerApp:
         self._step_counter += 1
 
         if terminated or truncated:
+            if self.replay_controller is not None:
+                print("Episode ended during replay.")
+                self.close()
+                return
             self.observation, self.info = self.env.reset(seed=self.seed)
             if self.policy_controller:
                 self.policy_controller.reset()
@@ -405,6 +676,11 @@ class PlayerApp:
                 metrics=current_metrics,
                 info_before=current_info,
                 info_after=next_info,
+            )
+        if self.scratchpad and diagnostics is None and self.replay_controller:
+            self.scratchpad.update(
+                step=self._step_counter,
+                action_id=action,
             )
 
         rgb = self.env.render()
@@ -442,7 +718,20 @@ def main() -> None:
     args = parse_args()
 
     bundle: Optional[PolicyBundle] = None
-    if args.policy is not None:
+    replay_trace: Optional[ReplayTrace] = None
+    if args.replay_file is not None:
+        replay_trace = load_replay_trace(
+            args.replay_file, args.replay_generation, args.replay_iteration
+        )
+        print(
+            f"Loaded {len(replay_trace.actions)} recorded actions from {args.replay_file} "
+            f"(generation={args.replay_generation}, iteration={args.replay_iteration})"
+        )
+        if replay_trace.reward is not None:
+            print(f"Recorded reward for iteration: {replay_trace.reward:.3f}")
+        if args.scratchpad:
+            print("Scratchpad limited to replay metadata (no policy diagnostics available).")
+    elif args.policy is not None:
         # Initialize ParamReader
         from rlo.params import ParamReader
         reader = ParamReader.get_instance()
@@ -498,9 +787,9 @@ def main() -> None:
         seed=args.seed,
         simulation_speed=args.simulation_speed,
         is_training=False,
-        natural_drain_per_sec=0.1,
-        move_drain_per_sec=0.15,
-        jump_drain=0.2,
+        # natural_drain_per_sec=0.1,
+        # move_drain_per_sec=0.15,
+        # jump_drain=0.2,
     )
     app = PlayerApp(
         env,
@@ -509,6 +798,7 @@ def main() -> None:
         deterministic_policy=not args.stochastic,
         show_scratchpad=args.scratchpad,
         pixel_scale=args.scale,
+        replay_trace=replay_trace,
     )
     app.run()
 

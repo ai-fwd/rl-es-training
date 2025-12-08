@@ -62,9 +62,9 @@ def make_basic_features(
             #1.0,  # Bias term
             energy,
             #t_min,
-            #info["x_position"],
+            info["x_position"],
             #info["y_position"],
-            1.0 if info["on_ground"] else 0.0,
+            #1.0 if info["on_ground"] else 0.0,
             # these features are not guaranteed to be present b/c they're calculated during step
             #1.0 if info.get("fell", False) else 0.0,
             1.0 if info.get("can_eat", False) else 0.0,

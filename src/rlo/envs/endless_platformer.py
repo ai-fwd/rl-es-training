@@ -232,7 +232,8 @@ class EndlessPlatformerEnv(Env):
         truncated = False
         fell_any = False
         last_forward_speed = 0.0
-        last_nearby_orb: Tuple[float, float, float] | None = None
+        nearby_orb: Tuple[float, float, float] | None = None
+        orb: Tuple[float, float, float] | None = None
         for _ in range(repeats):
             forward_speed = self.base_speed
             forward_boost = self.forward_boost
@@ -305,12 +306,10 @@ class EndlessPlatformerEnv(Env):
                         self._energy + self.energy_pickup_amount,
                     )
                     self._energy_orbs.remove(orb)
-                    nearby_orb = self._get_orb_within_eat_radius()
 
             total_reward += 1.0
             fell_any = fell_any or fell
             last_forward_speed = forward_speed
-            last_nearby_orb = nearby_orb
             terminated = self._energy <= 0.0
             if terminated:
                 break
@@ -326,8 +325,8 @@ class EndlessPlatformerEnv(Env):
             "y_velocity": self._character_vy,
             "on_ground": self._on_ground,
             "fell": fell_any,
-            "can_eat": last_nearby_orb is not None,
-            "near_food": last_nearby_orb is not None,
+            "can_eat": orb is not None,
+            "near_food": nearby_orb is not None,
             "energy": self._energy,
             "energy_max": self.energy_max_overfill,
             "elapsed_time_s": self._elapsed_time,
