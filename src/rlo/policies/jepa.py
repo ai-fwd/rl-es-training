@@ -1,3 +1,4 @@
+from curses import meta
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,13 +11,13 @@ class JEPAModule(nn.Module):
         self,
         input_dim: int,
         action_dim: int,
-        metadata_dim: int = 1,  # e.g. energy
         tau: float = 0.995,
     ):
         super().__init__()
         reader = ParamReader.get_instance()
         hidden_dim = reader.get(self, "hidden_dim", 64)
         latent_dim = reader.get(self, "latent_dim", 32)
+        metadata_dim = reader.get(self, "probe_dim", 1)
         
         self.tau = tau
         self.latent_dim = latent_dim

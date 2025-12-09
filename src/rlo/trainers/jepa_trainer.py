@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from math import e
+from math import e, log
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
@@ -18,6 +18,7 @@ from rlo.utils.logging import GenerationStats
 from rlo.utils.serialization import PolicyBundle
 
 from rlo.params import ParamReader
+from pytorch_lightning.loggers import TensorBoardLogger
 
 
 
@@ -132,14 +133,13 @@ def evaluate_candidate(
         total_reward += float(reward)
 
         next_features = make_features(next_obs, next_info, action)
-        energy = next_info.get("energy", 0.0)
 
         transitions.append(
             {
                 "obs": features,
                 "action": action,
                 "next_obs": next_features,
-                "metadata": np.array([energy], dtype=np.float32),
+                "metadata": np.array([1.0 if next_info.get("can_eat", False) else 0.0, 1.0 if next_info.get("near_food", False) else 0.0], dtype=np.float32),
             }
         )
 
@@ -277,6 +277,15 @@ def train_jepa(
     # Save params.yaml
     reader = ParamReader.get_instance()
     reader.dump(str(checkpoint_dir / "params.yaml"))
+    
+    # Create custom logger
+    logger = TensorBoardLogger(
+        save_dir=str(checkpoint_dir) + "/lightning_logs",
+        name="jepa",
+    )
+
+
+    
     monitor_metric = "val_loss" if val_loader is not None else "train_loss"
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         dirpath=str(checkpoint_dir),
@@ -289,13 +298,13 @@ def train_jepa(
     trainer = pl.Trainer(
         max_epochs=25,
         callbacks=[checkpoint_callback],
-        logger=False,
+        logger=logger,
         enable_checkpointing=True,
         default_root_dir=str(checkpoint_dir),
         accelerator=accelerator,
         devices=1,
         deterministic=True,
-        fast_dev_run=True
+        #fast_dev_run=True
     )
 
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
